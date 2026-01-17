@@ -2,26 +2,30 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V2.0 (能量判定版)</title>
+    <title>V178-X 鋼鐵指揮官 V2.0 (全功能版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
-        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; font-size: 14px; }
+        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
         .container { max-width: 1000px; margin: 0 auto; }
-        .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; align-items: end; }
+        .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; align-items: end; }
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
-        select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; }
+        select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; box-sizing: border-box; }
         .audio-btn { background: var(--ready); color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        
+        .timer-bar { background: #1e2329; padding: 8px 15px; border-radius: 5px; margin-bottom: 10px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid var(--ready); }
+        
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
+        .symbol-btn { cursor: pointer; text-decoration: underline; font-weight: bold; font-size: 16px; }
+        .is-locked { color: #f0b90b !important; text-shadow: 0 0 8px rgba(240, 185, 11, 0.5); }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 11px; }
-        .READY { background: rgba(240, 185, 11, 0.2); color: var(--ready); border: 1px solid var(--ready); }
-        .ENTRY { background: var(--entry); color: #fff; box-shadow: 0 0 15px var(--entry); animation: pulse 0.5s infinite alternate; }
-        .HOLD { background: var(--hold); color: #fff; border: 1px solid #fff; box-shadow: 0 0 15px var(--hold); }
+        .READY { background: rgba(240, 185, 11, 0.2); color: var(--ready); }
+        .ENTRY { background: var(--entry); color: #fff; animation: pulse 0.5s infinite alternate; }
+        .HOLD { background: var(--hold); color: #fff; border: 1px solid #fff; box-shadow: 0 0 10px var(--hold); }
         .SCAN { color: var(--scan); }
-        .oi-up { color: #2ebd85; font-size: 10px; }
-        .oi-down { color: #f6465d; font-size: 10px; }
-        @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.03); } }
+        .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
+        @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
     </style>
 </head>
 <body>
@@ -31,10 +35,16 @@
         <div><label>週期</label><select id="lookbackDays"><option value="3" selected>3 天</option><option value="7">7 天</option></select></div>
         <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
         <div><label>音效</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
-        <div style="font-size: 11px; color: #888;">模式：價格+資費+持倉(OI)</div>
+        <div style="font-size: 11px; color: #888;">燃料監控：資費趨勢+持倉變動</div>
     </div>
+
+    <div class="timer-bar">
+        <span>系統時間：<b id="lastUpdate">--:--:--</b></span>
+        <span id="nextRefresh">下次刷新：15s</span>
+    </div>
+
     <table>
-        <thead><tr><th>幣種</th><th>價格 (前高)</th><th>狀態</th><th>資費 (趨勢)</th><th>持倉 OI 變動</th><th>引力</th></tr></thead>
+        <thead><tr><th>幣種 (鎖定)</th><th>當前/前高</th><th>狀態</th><th>資費 (🔥趨勢)</th><th>持倉 OI 變動</th><th>引力</th></tr></thead>
         <tbody id="list"></tbody>
     </table>
 </div>
@@ -42,14 +52,31 @@
 <script>
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT"];
     let audioEnabled = false;
-    let historyData = {}; // 存儲資費與OI歷史
+    let lockedSymbols = {};
+    let historyData = {}; 
+    let countdown = 15;
     const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
+
+    function toggleLock(symbol) {
+        lockedSymbols[symbol] = !lockedSymbols[symbol];
+        updateUI(); // 立即渲染鎖定狀態
+    }
 
     document.getElementById('enableAudio').addEventListener('click', function() {
         audioEnabled = !audioEnabled;
         this.innerText = audioEnabled ? "✅ 監控中" : "📢 啟動監控";
         entryAudio.play().then(() => entryAudio.pause());
     });
+
+    // 倒數計時器
+    setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+            countdown = 15;
+            update();
+        }
+        document.getElementById('nextRefresh').innerText = `下次刷新：${countdown}s`;
+    }, 1000);
 
     async function update() {
         try {
@@ -60,6 +87,9 @@
             const tickers = await r.json();
             const active = tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol) && parseFloat(x.quoteVolume) > 5000000)
                                  .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50);
+
+            const now = new Date();
+            document.getElementById('lastUpdate').innerText = now.toLocaleTimeString();
 
             let playE = false;
             const promises = active.map(async (t) => {
@@ -75,9 +105,8 @@
                 const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
                 const dist = ((highVal - curPrice) / curPrice * 100);
 
-                // 歷史數據紀錄 (用作 1 分鐘對比)
                 if (!historyData[t.symbol]) historyData[t.symbol] = [];
-                historyData[t.symbol].push({ fund, oi, time: Date.now() });
+                historyData[t.symbol].push({ fund, oi });
                 if (historyData[t.symbol].length > 4) historyData[t.symbol].shift();
 
                 const oldData = historyData[t.symbol][0];
@@ -88,8 +117,8 @@
                 const fundOk = fund <= fundLimit;
 
                 if (curPrice > highVal && fundOk) {
-                    // 科學綠燈判定：1.資費擴大 OR 2.持倉量增加 OR 3.持倉沒掉(量縮整理)
-                    if (fundExpanding || oiChange > 0.5 || (Math.abs(oiChange) < 1)) {
+                    // 自動綠燈：資費擴大 OR 持倉增長 OR 籌碼鎖定
+                    if (fundExpanding || oiChange > 0.5 || Math.abs(oiChange) < 1) {
                         stCmd = "HOLD";
                     } else {
                         stCmd = "ENTRY";
@@ -105,24 +134,34 @@
             const results = (await Promise.all(promises)).filter(x => x !== null);
             if (audioEnabled && playE) entryAudio.play();
 
-            results.sort((a, b) => {
-                const s = { 'ENTRY': 0, 'HOLD': 1, 'READY': 2, 'SCAN': 3 };
-                return s[a.stCmd] - s[b.stCmd] || a.dist - b.dist;
-            });
-
-            document.getElementById('list').innerHTML = results.slice(0, 25).map(c => `
-                <tr>
-                    <td><b>${c.symbol.replace('USDT','')}</b></td>
-                    <td><div style="font-size:10px;color:#666">H:${c.highVal}</div>${c.curPrice}</td>
-                    <td><span class="status-badge ${c.stCmd}">${c.stCmd}</span></td>
-                    <td class="${Math.abs(c.fund)>=0.05?'fund-warn':''}">${c.fund.toFixed(4)}% ${c.fundExpanding?'🔥':''}</td>
-                    <td class="${c.oiChange>0?'oi-up':'oi-down'}">${c.oiChange>0?'+':''}${c.oiChange.toFixed(2)}%</td>
-                    <td style="color:${c.dist<1.5?'#f0b90b':''}">${c.dist.toFixed(2)}%</td>
-                </tr>
-            `).join('');
+            window.currentResults = results; // 存到全域供立即更新 UI
+            updateUI();
         } catch (e) {}
     }
-    setInterval(update, 15000); update();
+
+    function updateUI() {
+        if (!window.currentResults) return;
+        const results = [...window.currentResults];
+        results.sort((a, b) => {
+            if (lockedSymbols[a.symbol] && !lockedSymbols[b.symbol]) return -1;
+            if (!lockedSymbols[a.symbol] && lockedSymbols[b.symbol]) return 1;
+            const s = { 'ENTRY': 0, 'HOLD': 1, 'READY': 2, 'SCAN': 3 };
+            return s[a.stCmd] - s[b.stCmd] || a.dist - b.dist;
+        });
+
+        document.getElementById('list').innerHTML = results.slice(0, 30).map(c => `
+            <tr>
+                <td><span class="symbol-btn ${lockedSymbols[c.symbol]?'is-locked':''}" onclick="toggleLock('${c.symbol}')">${c.symbol.replace('USDT','')}</span></td>
+                <td><div>${c.curPrice}</div><div style="font-size:10px;color:#666">H:${c.highVal}</div></td>
+                <td><span class="status-badge ${c.stCmd}">${c.stCmd}</span></td>
+                <td class="${Math.abs(c.fund)>=0.05?'fund-warn':''}">${c.fund.toFixed(4)}% ${c.fundExpanding?'🔥':''}</td>
+                <td style="color:${c.oiChange>0?'#2ebd85':'#f6465d'}">${c.oiChange>0?'+':''}${c.oiChange.toFixed(2)}%</td>
+                <td style="color:${c.dist<1.5?'#f0b90b':''}">${c.dist.toFixed(2)}%</td>
+            </tr>
+        `).join('');
+    }
+
+    update(); // 初始化執行
 </script>
 </body>
 </html>
