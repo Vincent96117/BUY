@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V178-X SQUEEZE COMMANDER V1.2</title>
+    <title>V178-X SQUEEZE COMMANDER V1.3</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; padding: 10px; }
@@ -17,25 +17,41 @@
         .symbol-name { font-size: 16px; font-weight: bold; color: #fff; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         
+        /* 狀態閃爍邏輯 */
         .SCAN { background: rgba(71, 77, 87, 0.15); color: var(--scan); border: 1px solid var(--scan); }
-        .READY { background: rgba(240, 185, 11, 0.2); color: var(--ready); border: 1px solid var(--ready); box-shadow: 0 0 8px rgba(240, 185, 11, 0.3); }
-        .ENTRY { background: rgba(246, 70, 93, 0.25); color: var(--entry); border: 1px solid var(--entry); box-shadow: 0 0 10px var(--entry); animation: pulse 0.8s infinite; }
+        
+        .READY { 
+            background: rgba(240, 185, 11, 0.25); color: var(--ready); border: 1px solid var(--ready); 
+            box-shadow: 0 0 10px rgba(240, 185, 11, 0.4);
+            animation: ready-flash 1.5s infinite ease-in-out;
+        }
+        
+        .ENTRY { 
+            background: rgba(246, 70, 93, 0.35); color: var(--entry); border: 1px solid var(--entry); 
+            box-shadow: 0 0 15px var(--entry);
+            animation: entry-flash 0.6s infinite alternate;
+        }
+
+        @keyframes ready-flash { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        @keyframes entry-flash { 0% { transform: scale(1); box-shadow: 0 0 5px var(--entry); } 100% { transform: scale(1.1); box-shadow: 0 0 20px var(--entry); } }
         
         .price-info { font-family: 'Roboto Mono', monospace; }
         .fund-val { font-size: 13px; font-weight: bold; }
         .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; }
         
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.03); } 100% { transform: scale(1); } }
         .progress-bg { height: 4px; background: #333; margin-top: 8px; border-radius: 2px; width: 100px; }
         .progress-bar { height: 100%; border-radius: 2px; transition: width 0.5s; }
+        
+        .audio-toggle { background: #333; color: #fff; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="header">
-        <div style="color: var(--ready); font-size: 20px; font-weight: bold; letter-spacing: 1px;">V178-X 嘎空指揮官 <span style="font-size:12px; color:#666">V1.2 (自動排序版)</span></div>
-        <div id="market-summary" style="font-size: 12px; color: #848e9c; margin-top: 5px;">正在掃描全場引力...</div>
+        <div style="color: var(--ready); font-size: 20px; font-weight: bold; letter-spacing: 1px;">V178-X 嘎空指揮官 <span style="font-size:12px; color:#666">V1.3 (聲光強化版)</span></div>
+        <div id="market-summary" style="font-size: 12px; color: #848e9c; margin-top: 5px;">點擊下方按鈕啟動音效監控...</div>
+        <button id="enableAudio" class="audio-toggle">🔊 點擊啟動音效提示</button>
     </div>
 
     <table>
@@ -45,7 +61,7 @@
                 <th>觀察價/當前價</th>
                 <th>燈號指令</th>
                 <th>資費</th>
-                <th>引力距離 (由近到遠)</th>
+                <th>引力距離 ↓</th>
             </tr>
         </thead>
         <tbody id="list"></tbody>
@@ -53,8 +69,17 @@
 </div>
 
 <script>
-    // 排除清單：市值前 25 + 特定排除幣種
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
+    
+    let audioEnabled = false;
+    const readyAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'); // 短促提醒
+    const entryAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3');   // 警報提醒
+
+    document.getElementById('enableAudio').addEventListener('click', function() {
+        audioEnabled = !audioEnabled;
+        this.innerText = audioEnabled ? "🔊 音效監控中" : "🔇 點擊啟動音效提示";
+        this.style.background = audioEnabled ? "#2ebd85" : "#333";
+    });
 
     async function get7DHigh(symbol) {
         try {
@@ -68,42 +93,46 @@
         try {
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const all = await tickerR.json();
-            
-            // 初步篩選合約幣種
             const baseList = all.filter(c => c.symbol.endsWith('USDT') && !blacklist.includes(c.symbol) && parseFloat(c.quoteVolume) > 30000000);
 
             let coinData = [];
-            
-            // 同步抓取結構數據
-            for (let coin of baseList.slice(0, 40)) {
+            let hasEntry = false;
+            let hasReady = false;
+
+            for (let coin of baseList.slice(0, 35)) {
                 const high7D = await get7DHigh(coin.symbol);
                 const curPrice = parseFloat(coin.lastPrice);
                 const dist = ((high7D - curPrice) / curPrice * 100);
-                
                 const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${coin.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
-                coinData.push({ ...coin, high7D, curPrice, dist, fund });
+                let stCmd = "SCAN";
+                if (curPrice >= high7D * 1.002 && fund < -0.05) {
+                    stCmd = "ENTRY"; hasEntry = true;
+                } else if (dist < 1.5 && dist > -0.5 && fund < -0.07) {
+                    stCmd = "READY"; hasReady = true;
+                }
+
+                coinData.push({ ...coin, high7D, curPrice, dist, fund, stCmd });
             }
 
-            // --- 核心排序邏輯：引力距離最小的排最上面 ---
+            // 排序：引力距離最小排上面
             coinData.sort((a, b) => a.dist - b.dist);
+
+            // 音效邏輯
+            if (audioEnabled) {
+                if (hasEntry) entryAudio.play();
+                else if (hasReady) readyAudio.play();
+            }
 
             const listBody = document.getElementById('list');
             listBody.innerHTML = '';
-            document.getElementById('market-summary').innerText = `最後更新: ${new Date().toLocaleTimeString()} (已按引力優先排序)`;
+            document.getElementById('market-summary').innerText = `最後掃描: ${new Date().toLocaleTimeString()} | 負資費門檻: 0.05%`;
 
             for (let coin of coinData) {
-                let st = { cmd: "SCAN", cls: "SCAN", note: "尋找燃料" };
+                const stNote = coin.stCmd === "ENTRY" ? "🔴 點火進場" : (coin.stCmd === "READY" ? "🟡 結構邊緣" : "尋找燃料");
                 
-                // 指令判定
-                if (coin.curPrice >= coin.high7D * 1.002 && coin.fund < -0.05) {
-                    st = { cmd: "ENTRY", cls: "ENTRY", note: "🔴 突破點火" };
-                } else if (coin.dist < 1.5 && coin.dist > -0.5 && coin.fund < -0.07) {
-                    st = { cmd: "READY", cls: "READY", note: "🟡 結構邊緣" };
-                }
-
                 const row = `
                     <tr>
                         <td>
@@ -114,8 +143,8 @@
                             <div style="font-size:15px; color:#fff">${coin.curPrice}</div>
                         </td>
                         <td>
-                            <span class="status-badge ${st.cls}">${st.cmd}</span>
-                            <div style="font-size:10px; color:#848e9c; margin-top:4px">${st.note}</div>
+                            <span class="status-badge ${coin.stCmd}">${coin.stCmd}</span>
+                            <div style="font-size:10px; color:#848e9c; margin-top:4px">${stNote}</div>
                         </td>
                         <td class="fund-val ${Math.abs(coin.fund)>=0.05?'fund-warn':''}">${coin.fund}%</td>
                         <td>
@@ -131,7 +160,6 @@
         } catch (e) { console.error(e); }
     }
 
-    // 每 30 秒更新並重新排序
     setInterval(update, 30000); 
     update();
 </script>
