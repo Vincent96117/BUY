@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V2.0 (全功能版)</title>
+    <title>V178-X 鋼鐵指揮官 V2.1 (科學數據穩定版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -11,9 +11,7 @@
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
         select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; box-sizing: border-box; }
         .audio-btn { background: var(--ready); color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        
         .timer-bar { background: #1e2329; padding: 8px 15px; border-radius: 5px; margin-bottom: 10px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid var(--ready); }
-        
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
@@ -35,11 +33,10 @@
         <div><label>週期</label><select id="lookbackDays"><option value="3" selected>3 天</option><option value="7">7 天</option></select></div>
         <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
         <div><label>音效</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
-        <div style="font-size: 11px; color: #888;">燃料監控：資費趨勢+持倉變動</div>
     </div>
 
     <div class="timer-bar">
-        <span>系統時間：<b id="lastUpdate">--:--:--</b></span>
+        <span>系統時間：<b id="lastUpdate">數據初始化中...</b></span>
         <span id="nextRefresh">下次刷新：15s</span>
     </div>
 
@@ -59,7 +56,7 @@
 
     function toggleLock(symbol) {
         lockedSymbols[symbol] = !lockedSymbols[symbol];
-        updateUI(); // 立即渲染鎖定狀態
+        updateUI();
     }
 
     document.getElementById('enableAudio').addEventListener('click', function() {
@@ -68,13 +65,9 @@
         entryAudio.play().then(() => entryAudio.pause());
     });
 
-    // 倒數計時器
     setInterval(() => {
         countdown--;
-        if (countdown <= 0) {
-            countdown = 15;
-            update();
-        }
+        if (countdown <= 0) { countdown = 15; update(); }
         document.getElementById('nextRefresh').innerText = `下次刷新：${countdown}s`;
     }, 1000);
 
@@ -93,56 +86,59 @@
 
             let playE = false;
             const promises = active.map(async (t) => {
-                const [fundR, kR, oiR] = await Promise.all([
-                    fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`).then(res => res.json()),
-                    fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`).then(res => res.json()),
-                    fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${t.symbol}`).then(res => res.json())
-                ]);
+                try {
+                    const [fundR, kR, oiR] = await Promise.all([
+                        fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`).then(res => res.json()),
+                        fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`).then(res => res.json()),
+                        fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${t.symbol}`).then(res => res.json())
+                    ]);
 
-                const curPrice = parseFloat(t.lastPrice);
-                const fund = parseFloat(fundR.lastFundingRate) * 100;
-                const oi = parseFloat(oiR.openInterest);
-                const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
-                const dist = ((highVal - curPrice) / curPrice * 100);
+                    const curPrice = parseFloat(t.lastPrice);
+                    const fund = parseFloat(fundR.lastFundingRate) * 100;
+                    const oi = parseFloat(oiR.openInterest);
+                    const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
+                    const dist = ((highVal - curPrice) / curPrice * 100);
 
-                if (!historyData[t.symbol]) historyData[t.symbol] = [];
-                historyData[t.symbol].push({ fund, oi });
-                if (historyData[t.symbol].length > 4) historyData[t.symbol].shift();
+                    if (!historyData[t.symbol]) historyData[t.symbol] = [];
+                    historyData[t.symbol].push({ fund, oi });
+                    if (historyData[t.symbol].length > 4) historyData[t.symbol].shift();
 
-                const oldData = historyData[t.symbol][0];
-                const fundExpanding = fund < oldData.fund; 
-                const oiChange = ((oi - oldData.oi) / oldData.oi * 100);
+                    // 數據不足一分鐘，先不顯示該幣種，避免 NaN
+                    if (historyData[t.symbol].length < 4) return null;
 
-                let stCmd = "SCAN";
-                const fundOk = fund <= fundLimit;
+                    const oldData = historyData[t.symbol][0];
+                    const fundExpanding = fund < oldData.fund; 
+                    const oiChange = ((oi - oldData.oi) / oldData.oi * 100);
 
-                if (curPrice > highVal && fundOk) {
-                    // 自動綠燈：資費擴大 OR 持倉增長 OR 籌碼鎖定
-                    if (fundExpanding || oiChange > 0.5 || Math.abs(oiChange) < 1) {
-                        stCmd = "HOLD";
-                    } else {
-                        stCmd = "ENTRY";
-                        playE = true;
+                    let stCmd = "SCAN";
+                    const fundOk = fund <= fundLimit;
+
+                    if (curPrice > highVal && fundOk) {
+                        if (fundExpanding || oiChange > 0.5 || Math.abs(oiChange) < 1) {
+                            stCmd = "HOLD";
+                        } else {
+                            stCmd = "ENTRY";
+                            playE = true;
+                        }
+                    } else if (dist < 1.5 && dist > -0.5 && fundOk) {
+                        stCmd = "READY";
                     }
-                } else if (dist < 1.5 && dist > -0.5 && fundOk) {
-                    stCmd = "READY";
-                }
 
-                return { symbol: t.symbol, highVal, curPrice, dist, fund, oiChange, stCmd, fundExpanding };
+                    return { symbol: t.symbol, highVal, curPrice, dist, fund, oiChange, stCmd, fundExpanding };
+                } catch (e) { return null; }
             });
 
             const results = (await Promise.all(promises)).filter(x => x !== null);
             if (audioEnabled && playE) entryAudio.play();
 
-            window.currentResults = results; // 存到全域供立即更新 UI
+            window.currentResults = results;
             updateUI();
         } catch (e) {}
     }
 
     function updateUI() {
         if (!window.currentResults) return;
-        const results = [...window.currentResults];
-        results.sort((a, b) => {
+        const results = [...window.currentResults].sort((a, b) => {
             if (lockedSymbols[a.symbol] && !lockedSymbols[b.symbol]) return -1;
             if (!lockedSymbols[a.symbol] && lockedSymbols[b.symbol]) return 1;
             const s = { 'ENTRY': 0, 'HOLD': 1, 'READY': 2, 'SCAN': 3 };
@@ -160,8 +156,7 @@
             </tr>
         `).join('');
     }
-
-    update(); // 初始化執行
+    update();
 </script>
 </body>
 </html>
