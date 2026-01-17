@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V3.0 (最終修正版)</title>
+    <title>V178-X 鋼鐵指揮官 V3.1 (1.9.7 演算法回歸)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -18,7 +18,7 @@
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         .READY { background: rgba(240, 185, 11, 0.3); color: var(--ready); border: 1px solid var(--ready); animation: flash 0.8s infinite; }
         .ENTRY { background: var(--entry); color: #fff; animation: pulse 0.4s infinite alternate; }
-        .SCAN { color: #555; border: 1px solid #333; opacity: 0.6; }
+        .SCAN { color: #848e9c; border: 1px solid #444; }
         .time-tag { font-size: 10px; color: #aaa; display: block; margin-top: 2px; }
         .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
         @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -30,7 +30,7 @@
     <div class="control-panel">
         <div><label>自訂天數</label><input type="number" id="lookbackDays" value="7"></div>
         <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
-        <div><label>成交過濾 (M)</label><input type="number" id="volLimit" value="8"></div>
+        <div><label>成交過濾 (M)</label><input type="number" id="volLimit" value="5"></div>
         <div><label>音效開關</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
     </div>
     <table>
@@ -40,6 +40,7 @@
 </div>
 
 <script>
+    // 依據你的要求排除特定大幣
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     let audioEnabled = false, lockedSymbols = {};
     const readyAudio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
@@ -69,8 +70,9 @@
             let coinData = [];
             let playType = null;
 
+            // 回歸 V1.9.7 的廣度，不因為資費踢幣
             const filteredTickers = data.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol))
-                                      .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 85);
+                                      .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 100);
 
             for (let t of filteredTickers) {
                 const vol = parseFloat(t.quoteVolume);
@@ -89,25 +91,30 @@
                 const curPrice = parseFloat(t.lastPrice);
                 const dist = ((highVal - curPrice) / curPrice * 100);
 
-                // --- 1. 關鍵過濾：引力距離等於 0 且沒過新高，直接刪除 ---
-                if (Math.abs(dist) < 0.0001 && curPrice <= highVal && !lockedSymbols[t.symbol]) continue;
+                // --- 拔掉引力距離為 0 的死幣 (除非突破變成 ENTRY) ---
+                if (Math.abs(dist) < 0.00001 && curPrice <= highVal && !lockedSymbols[t.symbol]) continue;
 
+                // --- V1.9.7 核心算法回歸 ---
                 let st = "SCAN";
-                const isFundOk = (parseFloat(fund) <= fundLimit);
-
-                // --- 2. 只有資費達標才亮燈，否則維持灰燈 SCAN ---
+                // 1. 突破前高：ENTRY
                 if (curPrice > highVal) {
-                    if (isFundOk) { st = "ENTRY"; playType = 'ENTRY'; }
-                    else { st = "SCAN"; } 
-                } else if (dist < 1.5 && dist > -0.5) {
-                    if (isFundOk) { st = "READY"; if(playType !== 'ENTRY') playType = 'READY'; }
-                    else { st = "SCAN"; }
+                    st = "ENTRY";
+                    // 只有資費達標才響警報
+                    if (parseFloat(fund) <= fundLimit) playType = 'ENTRY';
+                } 
+                // 2. 引力距離 < 1.5%：READY
+                else if (dist < 1.5 && dist > -0.5) {
+                    st = "READY";
+                    // 只有資費達標才響警報
+                    if (parseFloat(fund) <= fundLimit && playType !== 'ENTRY') playType = 'READY';
                 }
 
+                // 自動鎖定剛變化的標的
                 if ((st === "READY" || st === "ENTRY") && !lockedSymbols[t.symbol]) {
                     lockedSymbols[t.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
                 }
                 if (lockedSymbols[t.symbol]) lockedSymbols[t.symbol].lastSt = st;
+                
                 coinData.push({ s: t.symbol, highVal, curPrice, dist, fund, st });
             }
 
@@ -116,13 +123,15 @@
                 a.currentTime = 0; a.play().catch(()=>{});
             }
 
+            // 排序：鎖定優先 > 距離
             coinData.sort((a,b) => (lockedSymbols[b.s]?1:0) - (lockedSymbols[a.s]?1:0) || a.dist - b.dist);
 
             const body = document.getElementById('list'); body.innerHTML = '';
-            for (let c of coinData.slice(0, 40)) {
+            for (let c of coinData.slice(0, 45)) {
                 const lock = lockedSymbols[c.s];
+                // 資費正負 0.05 警告
                 const fundClass = Math.abs(parseFloat(c.fund)) >= 0.05 ? 'fund-warn' : '';
-                const displaySt = lock ? (lock.manual ? c.st : lock.lastSt) : c.st;
+                const displaySt = lock ? lock.lastSt : c.st;
                 
                 body.insertAdjacentHTML('beforeend', `
                     <tr class="${lock?.manual ? 'manual-locked' : ''}">
@@ -137,7 +146,8 @@
             }
         } catch (e) {}
     }
-    setInterval(update, 7000); update();
+    setInterval(update, 7000); 
+    update();
 </script>
 </body>
 </html>
