@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V1.9.9 (音效加強版)</title>
+    <title>V178-X 鋼鐵指揮官 V2.1 (淨化實戰版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -20,8 +20,7 @@
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         .READY { background: rgba(240, 185, 11, 0.3); color: var(--ready); border: 1px solid var(--ready); animation: flash 1s infinite; }
         .ENTRY { background: var(--entry); color: #fff; animation: pulse 0.5s infinite alternate; }
-        .SCAN { color: #474d57; }
-
+        
         .time-tag { font-size: 10px; color: #aaa; display: block; }
         .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
         
@@ -33,11 +32,11 @@
 <div class="container">
     <div class="control-panel">
         <div><label>結構週期</label><select id="lookbackDays"><option value="3" selected>3 天</option><option value="7">7 天</option></select></div>
-        <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
-        <div><label>音效提示</label><button id="enableAudio" class="audio-btn">📢 啟動監控 (點擊解鎖聲音)</button></div>
+        <div><label>成交過濾 (M)</label><input type="number" id="volLimit" value="10"></div>
+        <div><label>音效提示</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
     </div>
     <table>
-        <thead><tr><th>幣種 (鎖定)</th><th>前高/當前</th><th>指令 (時間)</th><th>資費</th><th>引力距離</th></tr></thead>
+        <thead><tr><th>幣種 (鎖定)</th><th>前高/當前價</th><th>燈號 (時間)</th><th>資費</th><th>引力距離</th></tr></thead>
         <tbody id="list"></tbody>
     </table>
 </div>
@@ -45,19 +44,15 @@
 <script>
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     let audioEnabled = false, lockedSymbols = {};
-    
-    // 換成更穩定的備用音源
     const readyAudio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
     const entryAudio = new Audio('https://actions.google.com/sounds/v1/alarms/alarm_clock_short.ogg');
 
     document.getElementById('enableAudio').onclick = function() {
         audioEnabled = !audioEnabled;
-        this.innerText = audioEnabled ? "✅ 監控中 (音效已開)" : "📢 啟動監控";
-        
-        // 關鍵動作：先播一次靜音來解鎖權限
+        this.innerText = audioEnabled ? "✅ 監控中" : "📢 啟動監控";
         readyAudio.volume = 0; readyAudio.play();
         entryAudio.volume = 0; entryAudio.play();
-        setTimeout(() => { readyAudio.volume = 1; entryAudio.volume = 1; }, 1000);
+        setTimeout(() => { readyAudio.volume = 1; entryAudio.volume = 1; }, 500);
     };
 
     function toggleLock(s) {
@@ -69,30 +64,37 @@
     async function update() {
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
-            const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
+            const volMin = parseFloat(document.getElementById('volLimit').value) * 1000000;
             const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const data = await r.json();
             
             let coinData = [];
-            let currentPlay = null;
+            let playType = null;
 
             for (let t of data.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol))) {
                 const vol = parseFloat(t.quoteVolume);
-                if (vol < 5000000 && !lockedSymbols[t.symbol]) continue;
+                // 第一道過濾：成交量太小且沒被手動鎖定的，直接滾
+                if (vol < volMin && !lockedSymbols[t.symbol]) continue;
 
                 const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
+                // 第二道過濾：資費死掉的殭屍幣，直接滾
+                if (fund === "0.0000" && vol < 20000000 && !lockedSymbols[t.symbol]) continue;
+
                 const kR = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`);
                 const k = await kR.json();
+                if(!k || k.length < 5) continue;
+                
                 const highVal = Math.max(...k.slice(0, days*6).map(x => parseFloat(x[2])));
                 const curPrice = parseFloat(t.lastPrice);
                 const dist = ((highVal - curPrice) / curPrice * 100);
 
                 let st = "SCAN";
-                if (curPrice > highVal && fund <= fundLimit) { st = "ENTRY"; currentPlay = 'ENTRY'; }
-                else if (dist < 1.5 && dist > -0.5 && fund <= fundLimit) { st = "READY"; if(currentPlay !== 'ENTRY') currentPlay = 'READY'; }
+                // 進入 READY 或 ENTRY
+                if (curPrice > highVal) { st = "ENTRY"; playType = 'ENTRY'; }
+                else if (dist < 1.5 && dist > -0.5) { st = "READY"; if(playType !== 'ENTRY') playType = 'READY'; }
 
                 if ((st === "READY" || st === "ENTRY") && !lockedSymbols[t.symbol]) {
                     lockedSymbols[t.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
@@ -101,20 +103,16 @@
                 coinData.push({ s: t.symbol, highVal, curPrice, dist, fund, st });
             }
 
-            // 強制播放音效邏輯
-            if (audioEnabled) {
-                if (currentPlay === 'ENTRY') {
-                    entryAudio.currentTime = 0; entryAudio.play().catch(e => console.log('Wait click'));
-                } else if (currentPlay === 'READY') {
-                    readyAudio.currentTime = 0; readyAudio.play().catch(e => console.log('Wait click'));
-                }
+            if (audioEnabled && playType) {
+                const a = (playType === 'ENTRY') ? entryAudio : readyAudio;
+                a.currentTime = 0; a.play();
             }
 
             coinData.sort((a,b) => (lockedSymbols[b.s]?1:0) - (lockedSymbols[a.s]?1:0) || a.dist - b.dist);
 
             const body = document.getElementById('list');
             body.innerHTML = '';
-            for (let c of coinData.slice(0, 30)) {
+            for (let c of coinData.slice(0, 35)) {
                 const lock = lockedSymbols[c.s];
                 const fundClass = Math.abs(parseFloat(c.fund)) >= 0.05 ? 'fund-warn' : '';
                 body.insertAdjacentHTML('beforeend', `
