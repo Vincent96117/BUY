@@ -2,54 +2,40 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V2.4 (7秒極速版)</title>
+    <title>V178-X 鋼鐵指揮官 V2.6 (引力淨化版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
-        .container { max-width: 950px; margin: 0 auto; }
-        .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; align-items: end; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 15px; align-items: end; }
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
         input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; box-sizing: border-box; }
         .audio-btn { background: var(--ready); color: #000; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-weight: bold; height: 38px; }
-        
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 11px; text-align: left; }
         td { padding: 10px 8px; border-bottom: 1px solid #2b2f36; }
-        
         .manual-locked { background: rgba(246, 70, 93, 0.12) !important; border-left: 5px solid var(--entry) !important; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         .READY { background: rgba(240, 185, 11, 0.3); color: var(--ready); border: 1px solid var(--ready); animation: flash 0.8s infinite; }
         .ENTRY { background: var(--entry); color: #fff; animation: pulse 0.4s infinite alternate; }
-        
         .time-tag { font-size: 10px; color: #aaa; display: block; margin-top: 2px; }
         .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
-        
         @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
-        .refresh-tag { font-size: 9px; color: #555; text-align: right; margin-top: 5px; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="control-panel">
-        <div>
-            <label>自訂天數 (1-30)</label>
-            <input type="number" id="lookbackDays" value="7">
-        </div>
-        <div>
-            <label>成交過濾 (M)</label>
-            <input type="number" id="volLimit" value="15">
-        </div>
-        <div>
-            <label>音效開關</label>
-            <button id="enableAudio" class="audio-btn">📢 啟動監控</button>
-        </div>
+        <div><label>自訂天數</label><input type="number" id="lookbackDays" value="7"></div>
+        <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
+        <div><label>成交過濾 (M)</label><input type="number" id="volLimit" value="15"></div>
+        <div><label>音效開關</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
     </div>
     <table>
         <thead><tr><th>幣種 (鎖定)</th><th>前高/當前價</th><th>燈號 (時間)</th><th>資費</th><th>引力距離 ↓</th></tr></thead>
         <tbody id="list"></tbody>
     </table>
-    <div class="refresh-tag">系統每 7 秒自動更新一次資料庫</div>
 </div>
 
 <script>
@@ -61,8 +47,7 @@
     document.getElementById('enableAudio').onclick = function() {
         audioEnabled = !audioEnabled;
         this.innerText = audioEnabled ? "✅ 監控中 (7s)" : "📢 啟動監控";
-        readyAudio.volume = 0; readyAudio.play();
-        entryAudio.volume = 0; entryAudio.play();
+        readyAudio.volume = 0; readyAudio.play(); entryAudio.volume = 0; entryAudio.play();
         setTimeout(() => { readyAudio.volume = 1; entryAudio.volume = 1; }, 500);
     };
 
@@ -75,6 +60,7 @@
     async function update() {
         try {
             const days = parseInt(document.getElementById('lookbackDays').value) || 7;
+            const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
             const volMin = parseFloat(document.getElementById('volLimit').value) * 1000000;
             const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const data = await r.json();
@@ -82,10 +68,8 @@
             let coinData = [];
             let playType = null;
 
-            // 挑選成交量前 60 的幣種處理，確保 7 秒內能算完
             const filteredTickers = data.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol))
-                                      .sort((a,b) => b.quoteVolume - a.quoteVolume)
-                                      .slice(0, 60);
+                                      .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 70);
 
             for (let t of filteredTickers) {
                 const vol = parseFloat(t.quoteVolume);
@@ -94,9 +78,6 @@
                 const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
-
-                // 刷掉垃圾幣
-                if (fund === "0.0000" && vol < 25000000 && !lockedSymbols[t.symbol]) continue;
 
                 const limit = days * 6; 
                 const kR = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${limit + 1}`);
@@ -107,9 +88,13 @@
                 const curPrice = parseFloat(t.lastPrice);
                 const dist = ((highVal - curPrice) / curPrice * 100);
 
+                // --- 新增：引力距離 0 拔掉邏輯 ---
+                // 如果距離剛好是 0 且沒有過新高(Entry)，直接跳過不顯示
+                if (Math.abs(dist) < 0.0001 && curPrice <= highVal && !lockedSymbols[t.symbol]) continue;
+
                 let st = "SCAN";
-                if (curPrice > highVal) { st = "ENTRY"; playType = 'ENTRY'; }
-                else if (dist < 1.5 && dist > -0.5) { st = "READY"; if(playType !== 'ENTRY') playType = 'READY'; }
+                if (curPrice > highVal && fund <= fundLimit) { st = "ENTRY"; playType = 'ENTRY'; }
+                else if (dist < 1.5 && dist > -0.5 && fund <= fundLimit) { st = "READY"; if(playType !== 'ENTRY') playType = 'READY'; }
 
                 if ((st === "READY" || st === "ENTRY") && !lockedSymbols[t.symbol]) {
                     lockedSymbols[t.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
@@ -120,13 +105,12 @@
 
             if (audioEnabled && playType) {
                 const a = (playType === 'ENTRY') ? entryAudio : readyAudio;
-                a.currentTime = 0; a.play();
+                a.currentTime = 0; a.play().catch(()=>{});
             }
 
             coinData.sort((a,b) => (lockedSymbols[b.s]?1:0) - (lockedSymbols[a.s]?1:0) || a.dist - b.dist);
 
-            const body = document.getElementById('list');
-            body.innerHTML = '';
+            const body = document.getElementById('list'); body.innerHTML = '';
             for (let c of coinData.slice(0, 30)) {
                 const lock = lockedSymbols[c.s];
                 const fundClass = Math.abs(parseFloat(c.fund)) >= 0.05 ? 'fund-warn' : '';
@@ -143,9 +127,7 @@
             }
         } catch (e) {}
     }
-    document.getElementById('lookbackDays').onchange = update;
-    setInterval(update, 7000); // 改成 7 秒
-    update();
+    setInterval(update, 7000); update();
 </script>
 </body>
 </html>
