@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V178-X 鋼鐵指揮官 V1.9.2</title>
+    <title>V178-X 鋼鐵指揮官 V1.9.3 (永不遺失版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -17,14 +17,13 @@
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
         
-        /* 樣式強化 */
         .manual-locked { background: rgba(246, 70, 93, 0.12) !important; border-left: 5px solid var(--entry) !important; }
         .auto-locked { background: rgba(46, 189, 133, 0.08); border-left: 5px solid var(--hold); }
         .symbol-btn { cursor: pointer; text-decoration: underline; color: #fff; font-weight: bold; font-size: 16px; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         
         .READY { background: rgba(240, 185, 11, 0.25); color: var(--ready); border: 1px solid var(--ready); animation: flash 1.5s infinite; }
-        .ENTRY { background: rgba(246, 70, 93, 0.8); color: #fff; border: 1px solid #fff; box-shadow: 0 0 10px var(--entry); animation: pulse 0.5s infinite alternate; }
+        .ENTRY { background: var(--entry); color: #fff; border: 1px solid #fff; box-shadow: 0 0 10px var(--entry); animation: pulse 0.5s infinite alternate; }
         .SCAN { background: rgba(71, 77, 87, 0.1); color: var(--scan); border: 1px solid var(--scan); }
 
         .time-tag { font-size: 10px; color: #aaa; display: block; margin-top: 4px; font-family: monospace; }
@@ -75,10 +74,11 @@
 </div>
 
 <script>
+    // 過濾黑名單 [cite: 2026-01-12]
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     
     let audioEnabled = false;
-    let lockedSymbols = {}; 
+    let lockedSymbols = {}; // { 'SANDUSDT': { time: '...', manual: true, lastSt: '...' } }
     const readyAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3');
     const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
 
@@ -90,7 +90,7 @@
 
     function toggleLock(symbol) {
         if (lockedSymbols[symbol]) delete lockedSymbols[symbol];
-        else lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: true };
+        else lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: true, lastSt: 'SCAN' };
         update();
     }
 
@@ -99,7 +99,6 @@
         try {
             const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=${limit + 1}`);
             const d = await r.json();
-            // 排除最後一根(當前根)，抓真正的歷史前高
             const history = d.slice(0, limit);
             return Math.max(...history.map(k => parseFloat(k[2])));
         } catch(e) { return 0; }
@@ -109,36 +108,53 @@
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
+            
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
-            const all = await tickerR.json();
-            const candidates = all.filter(c => c.symbol.endsWith('USDT') && !blacklist.includes(c.symbol) && parseFloat(c.quoteVolume) > 30000000);
+            const allTickers = await tickerR.json();
+            
+            // 1. 先把所有手動鎖定的幣種列入清單，不論成交量
+            let targetSymbols = new Set(Object.keys(lockedSymbols));
+            
+            // 2. 加入成交量前 40 的幣種
+            allTickers
+                .filter(c => c.symbol.endsWith('USDT') && !blacklist.includes(c.symbol))
+                .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+                .slice(0, 40)
+                .forEach(c => targetSymbols.add(c.symbol));
 
             let coinData = [];
             let playE = false, playR = false;
 
-            for (let coin of candidates.slice(0, 40)) {
-                const highVal = await getHigh(coin.symbol, days);
-                const curPrice = parseFloat(coin.lastPrice);
+            for (let symbol of targetSymbols) {
+                const ticker = allTickers.find(t => t.symbol === symbol);
+                if (!ticker) continue;
+
+                const highVal = await getHigh(symbol, days);
+                const curPrice = parseFloat(ticker.lastPrice);
                 const dist = ((highVal - curPrice) / curPrice * 100);
-                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${coin.symbol}`);
+                
+                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
                 let stCmd = "SCAN";
-                // 邏輯核心：只要價格高於歷史前高，就是 ENTRY
                 if (curPrice > highVal && fund <= fundLimit) { stCmd = "ENTRY"; playE = true; }
                 else if (dist < 1.5 && dist > -0.5 && fund <= fundLimit) { stCmd = "READY"; playR = true; }
 
-                if ((stCmd === "READY" || stCmd === "ENTRY") && !lockedSymbols[coin.symbol]) {
-                    lockedSymbols[coin.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
+                // 更新鎖定清單狀態
+                if (stCmd === "READY" || stCmd === "ENTRY") {
+                    if (!lockedSymbols[symbol]) {
+                        lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: false };
+                    }
                 }
-                if (lockedSymbols[coin.symbol]) lockedSymbols[coin.symbol].lastSt = stCmd;
+                if (lockedSymbols[symbol]) lockedSymbols[symbol].lastSt = stCmd;
 
-                coinData.push({ ...coin, highVal, curPrice, dist, fund, stCmd });
+                coinData.push({ symbol, highVal, curPrice, dist, fund, stCmd });
             }
 
             if (audioEnabled) { if(playE) entryAudio.play(); else if(playR) readyAudio.play(); }
 
+            // 排序：手動鎖定(2) > 自動鎖定(1) > 引力距離
             coinData.sort((a, b) => {
                 const aL = lockedSymbols[a.symbol] ? (lockedSymbols[a.symbol].manual ? 2 : 1) : 0;
                 const bL = lockedSymbols[b.symbol] ? (lockedSymbols[b.symbol].manual ? 2 : 1) : 0;
@@ -153,6 +169,9 @@
             for (let coin of coinData) {
                 const lockInfo = lockedSymbols[coin.symbol];
                 const displaySt = lockInfo ? lockInfo.lastSt : coin.stCmd;
+                // 資費正負 0.05 變色 [cite: 2026-01-11]
+                const fundClass = Math.abs(parseFloat(coin.fund)) >= 0.05 ? 'fund-warn' : '';
+
                 const row = `
                     <tr class="${lockInfo ? (lockInfo.manual ? 'manual-locked' : 'auto-locked') : ''}">
                         <td>
@@ -167,13 +186,13 @@
                             <span class="status-badge ${displaySt}">${displaySt}</span>
                             ${lockInfo ? `<span class="time-tag">⏱ ${lockInfo.time} ${lockInfo.manual?'📌':''}<button class="unlock-btn" onclick="toggleLock('${coin.symbol}')">解鎖</button></span>` : ''}
                         </td>
-                        <td class="${Math.abs(coin.fund)>=0.05?'fund-warn':''}">${coin.fund}%</td>
+                        <td class="${fundClass}">${coin.fund}%</td>
                         <td style="font-weight:bold; color:${coin.dist < 1.5 ? 'var(--ready)' : '#888'}">${coin.dist.toFixed(2)}%</td>
                     </tr>
                 `;
                 listBody.insertAdjacentHTML('beforeend', row);
             }
-        } catch (e) {}
+        } catch (e) { console.error(e); }
     }
 
     setInterval(update, 30000);
