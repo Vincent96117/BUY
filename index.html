@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V178-X 嘎空指揮官 V1.6</title>
+    <title>V178-X 嘎空指揮官 V1.7</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; padding: 10px; }
         .container { max-width: 900px; margin: 0 auto; }
         
-        /* 控制面板 */
         .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; align-items: end; }
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
         select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; box-sizing: border-box; }
@@ -19,27 +18,20 @@
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
         
+        /* 鎖定行樣式 */
+        .pinned-row { background: rgba(240, 185, 11, 0.05); border-left: 3px solid var(--ready); }
         .symbol-name { font-size: 16px; font-weight: bold; color: #fff; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         
-        /* 燈號特效 */
         .SCAN { background: rgba(71, 77, 87, 0.15); color: var(--scan); border: 1px solid var(--scan); }
-        .READY { 
-            background: rgba(240, 185, 11, 0.25); color: var(--ready); border: 1px solid var(--ready); 
-            animation: ready-flash 1.5s infinite ease-in-out;
-        }
-        .ENTRY { 
-            background: rgba(246, 70, 93, 0.35); color: var(--entry); border: 1px solid var(--entry); 
-            box-shadow: 0 0 15px var(--entry); animation: entry-flash 0.6s infinite alternate;
-        }
+        .READY { background: rgba(240, 185, 11, 0.25); color: var(--ready); border: 1px solid var(--ready); animation: ready-flash 1.5s infinite ease-in-out; }
+        .ENTRY { background: rgba(246, 70, 93, 0.35); color: var(--entry); border: 1px solid var(--entry); animation: entry-flash 0.6s infinite alternate; }
 
+        .time-tag { font-size: 10px; color: #aaa; margin-top: 4px; font-family: monospace; display: block; }
+        .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
+        
         @keyframes ready-flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @keyframes entry-flash { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
-        
-        .fund-val { font-size: 13px; font-weight: bold; }
-        .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; }
-        .progress-bg { height: 4px; background: #333; margin-top: 8px; border-radius: 2px; width: 100px; }
-        .progress-bar { height: 100%; border-radius: 2px; transition: width 0.5s; }
     </style>
 </head>
 <body>
@@ -50,7 +42,6 @@
             <label>結構週期 (天)</label>
             <select id="lookbackDays">
                 <option value="3">3 天 (靈敏)</option>
-                <option value="5">5 天 (中庸)</option>
                 <option value="7" selected>7 天 (穩健)</option>
             </select>
         </div>
@@ -59,11 +50,7 @@
             <input type="number" id="fundThreshold" value="-0.03" step="0.01">
         </div>
         <div>
-            <label>音效開關</label>
-            <button id="enableAudio" class="audio-btn">🔊 啟動提示音</button>
-        </div>
-        <div style="font-size: 11px; color: #666; text-align: right;">
-            V1.6 實戰版<br>每 30 秒全場掃描
+            <button id="enableAudio" class="audio-btn">🔊 啟動提示音與監控</button>
         </div>
     </div>
 
@@ -72,7 +59,7 @@
             <tr>
                 <th>幣種</th>
                 <th>觀察/當前價</th>
-                <th>燈號指令</th>
+                <th>燈號指令 (觸發時間)</th>
                 <th>資費</th>
                 <th>引力距離 ↓</th>
             </tr>
@@ -82,16 +69,16 @@
 </div>
 
 <script>
-    // 排除特定幣種
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     
     let audioEnabled = false;
+    let statusLog = {}; // 用於存儲幣種進入 READY/ENTRY 的時間
     const readyAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
     const entryAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3');
 
     document.getElementById('enableAudio').addEventListener('click', function() {
         audioEnabled = !audioEnabled;
-        this.innerText = audioEnabled ? "✅ 監控中" : "🔊 啟動提示音";
+        this.innerText = audioEnabled ? "✅ 鎖定監控中" : "🔊 啟動提示音與監控";
         this.style.background = audioEnabled ? "#2ebd85" : "#f0b90b";
     });
 
@@ -108,18 +95,14 @@
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
-            
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const all = await tickerR.json();
             
-            // 篩選 USDT 合約幣
             const candidates = all.filter(c => c.symbol.endsWith('USDT') && !blacklist.includes(c.symbol) && parseFloat(c.quoteVolume) > 30000000);
 
             let coinData = [];
-            let playEntry = false;
-            let playReady = false;
+            let playEntry = false, playReady = false;
 
-            // 限制前 35 隻活耀幣
             for (let coin of candidates.slice(0, 35)) {
                 const highRecent = await getStructureHigh(coin.symbol, days);
                 const curPrice = parseFloat(coin.lastPrice);
@@ -136,10 +119,26 @@
                     stCmd = "READY"; playReady = true;
                 }
 
-                coinData.push({ ...coin, highRecent, curPrice, dist, fund, stCmd });
+                // 記錄觸發時間邏輯
+                if (stCmd !== "SCAN") {
+                    if (!statusLog[coin.symbol] || statusLog[coin.symbol].lastSt !== stCmd) {
+                        statusLog[coin.symbol] = { time: new Date().toLocaleTimeString(), lastSt: stCmd };
+                    }
+                } else {
+                    delete statusLog[coin.symbol]; // 如果變回 SCAN 就清除時間
+                }
+
+                coinData.push({ ...coin, highRecent, curPrice, dist, fund, stCmd, triggerTime: statusLog[coin.symbol]?.time || "" });
             }
 
-            coinData.sort((a, b) => a.dist - b.dist);
+            // --- 核心排序邏輯：狀態權重排序 ---
+            coinData.sort((a, b) => {
+                const getWeight = (st) => (st === 'ENTRY' ? 3 : (st === 'READY' ? 2 : 1));
+                const weightA = getWeight(a.stCmd);
+                const weightB = getWeight(b.stCmd);
+                if (weightA !== weightB) return weightB - weightA; // 優先排 ENTRY, 然後 READY
+                return a.dist - b.dist; // 同狀態下比距離
+            });
 
             if (audioEnabled) {
                 if (playEntry) entryAudio.play();
@@ -150,22 +149,21 @@
             listBody.innerHTML = '';
 
             for (let coin of coinData) {
+                const isPinned = coin.stCmd !== "SCAN";
                 const row = `
-                    <tr>
+                    <tr class="${isPinned ? 'pinned-row' : ''}">
                         <td>
                             <div class="symbol-name">${coin.symbol.replace('USDT','')}</div>
-                            <div style="font-size:10px; color:#5e6673">${days}D High: ${coin.highRecent}</div>
+                            <div style="font-size:10px; color:#666">${days}D High: ${coin.highRecent}</div>
                         </td>
                         <td><div style="font-family:monospace; color:#fff">${coin.curPrice}</div></td>
                         <td>
                             <span class="status-badge ${coin.stCmd}">${coin.stCmd}</span>
+                            ${coin.triggerTime ? `<span class="time-tag">⏱ ${coin.triggerTime}</span>` : ''}
                         </td>
                         <td class="fund-val ${Math.abs(coin.fund)>=0.05?'fund-warn':''}">${coin.fund}%</td>
                         <td>
                             <div style="font-size:13px; font-weight:bold; color:${coin.dist < 1.5 ? 'var(--ready)' : '#888'}">${coin.dist.toFixed(2)}%</div>
-                            <div class="progress-bg">
-                                <div class="progress-bar" style="width:${Math.max(0, 100 - (coin.dist * 10))}%; background:${coin.dist < 1.5 ? 'var(--ready)' : '#333'}"></div>
-                            </div>
                         </td>
                     </tr>
                 `;
