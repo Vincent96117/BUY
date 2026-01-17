@@ -70,18 +70,35 @@
 </div>
 
 <script>
-    // 嚴格黑名單 [cite: 2026-01-12]
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     
     let audioEnabled = false;
     let lockedSymbols = {}; 
-    const readyAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3');
-    const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
+
+    // 新增：Web Audio 上下文，解決瀏覽器不給放聲音的問題
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioCtx();
+
+    function playSound(freq, duration, vol) {
+        if (!audioEnabled) return;
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    }
 
     document.getElementById('enableAudio').addEventListener('click', function() {
         audioEnabled = !audioEnabled;
         this.innerText = audioEnabled ? "✅ 監控中" : "📢 啟動監控";
-        readyAudio.play().then(() => readyAudio.pause());
+        // 啟動時發出微弱測試音以解鎖權限
+        if (audioEnabled) playSound(440, 0.1, 0.01);
     });
 
     function toggleLock(symbol) {
@@ -103,7 +120,6 @@
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
-            
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const tickers = await tickerR.json();
             
@@ -114,14 +130,12 @@
                 const curPrice = parseFloat(t.lastPrice);
                 const vol = parseFloat(t.quoteVolume);
                 
-                // 1. 基本成交量過濾 (M)
                 if (vol < 5000000 && !lockedSymbols[t.symbol]) continue;
 
                 const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
-                // 2. 殭屍幣過濾：排除資費死掉的 (0.0000%) 標的
                 if (fund === "0.0000" && vol < 10000000 && !lockedSymbols[t.symbol]) continue;
 
                 const highVal = await getHigh(t.symbol, days);
@@ -139,7 +153,11 @@
                 coinData.push({ symbol: t.symbol, highVal, curPrice, dist, fund, stCmd });
             }
 
-            if (audioEnabled) { if(playE) entryAudio.play(); else if(playR) readyAudio.play(); }
+            // 觸發音效邏輯
+            if (audioEnabled) {
+                if (playE) playSound(880, 0.8, 0.2); // ENTRY 高音
+                else if (playR) playSound(440, 0.3, 0.1); // READY 中音
+            }
 
             coinData.sort((a, b) => (lockedSymbols[b.symbol]?1:0) - (lockedSymbols[a.symbol]?1:0) || a.dist - b.dist);
 
