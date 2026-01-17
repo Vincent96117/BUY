@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V178-X SQUEEZE COMMANDER</title>
+    <style>
+        :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --text: #eaecef; }
+        body { background: var(--bg); color: var(--text); font-family: "PingFang TC", sans-serif; margin: 0; padding: 10px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .header { background: var(--card); padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #333; text-align: center; }
+        .market-info { display: flex; justify-content: space-around; font-size: 14px; margin-bottom: 10px; color: #848e9c; }
+        
+        table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
+        th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
+        td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
+        
+        .symbol-name { font-size: 16px; font-weight: bold; color: #fff; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
+        .READY { background: rgba(240, 185, 11, 0.15); color: var(--ready); border: 1px solid var(--ready); }
+        .ENTRY { background: rgba(246, 70, 93, 0.15); color: var(--entry); border: 1px solid var(--entry); animation: flash 1s infinite; }
+        .HOLD { background: rgba(46, 189, 133, 0.15); color: var(--hold); border: 1px solid var(--hold); }
+        .EXIT { background: #333; color: #888; }
+
+        .price-info { font-family: 'Roboto Mono', monospace; }
+        .fund-val { font-size: 13px; font-weight: bold; }
+        .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; }
+        
+        @keyframes flash { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+        .progress-bg { height: 4px; background: #333; margin-top: 8px; border-radius: 2px; }
+        .progress-bar { height: 100%; background: var(--ready); border-radius: 2px; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <div style="color: var(--ready); font-size: 20px; font-weight: bold;">V178-X 嘎空指揮官 V1</div>
+        <div class="market-info" id="market-summary">BTC: -- | ETH: --</div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>幣種</th>
+                <th>觀察價/當前</th>
+                <th>指令狀態</th>
+                <th>資費</th>
+                <th>引力距離</th>
+            </tr>
+        </thead>
+        <tbody id="list"></tbody>
+    </table>
+</div>
+
+<script>
+    // 排除市值前 25 名
+    const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
+
+    async function getMarket() {
+        const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price?symbols=["BTCUSDT","ETHUSDT"]');
+        const d = await r.json();
+        document.getElementById('market-summary').innerText = `BTC: ${parseFloat(d[0].price).toLocaleString()} | ETH: ${parseFloat(d[1].price).toLocaleString()}`;
+    }
+
+    async function get7DHigh(symbol) {
+        const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=42`);
+        const d = await r.json();
+        return Math.max(...d.map(k => parseFloat(k[2])));
+    }
+
+    async function main() {
+        try {
+            const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+            const all = await tickerR.json();
+            
+            // 過濾與排除邏輯
+            const filtered = all.filter(c => !blacklist.includes(c.symbol) && parseFloat(c.quoteVolume) > 50000000)
+                              .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 20);
+
+            const listBody = document.getElementById('list');
+            listBody.innerHTML = '';
+
+            for (let coin of filtered) {
+                const high7D = await get7DHigh(coin.symbol);
+                const curPrice = parseFloat(coin.lastPrice);
+                
+                // 抓取資費
+                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${coin.symbol}`);
+                const fundD = await fundR.json();
+                const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
+                
+                const dist = ((high7D - curPrice) / curPrice * 100).toFixed(2);
+                
+                // 狀態指揮邏輯
+                let st = { cmd: "SCAN", cls: "", note: "尋找空頭" };
+                if (curPrice >= high7D * 1.002 && fund < -0.05) {
+                    st = { cmd: "ENTRY", cls: "ENTRY", note: "🔴 突破點火：進場嘎空！" };
+                } else if (dist < 1.5 && dist > 0 && fund < -0.07) {
+                    st = { cmd: "READY", cls: "READY", note: "🟡 結構邊緣：準備獵殺" };
+                } else if (curPrice > high7D && fund >= 0) {
+                    st = { cmd: "EXIT", cls: "EXIT", note: "⚪ 嘎空結束：資費回正" };
+                }
+
+                const row = `
+                    <tr>
+                        <td>
+                            <div class="symbol-name">${coin.symbol.replace('USDT','')}</div>
+                            <div style="font-size:10px; color:#5e6673">7D High: ${high7D}</div>
+                        </td>
+                        <td class="price-info">
+                            <div style="font-size:15px; color:#fff">${curPrice}</div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${st.cls}">${st.cmd}</span>
+                            <div style="font-size:10px; color:#848e9c; margin-top:4px">${st.note}</div>
+                        </td>
+                        <td class="fund-val ${Math.abs(fund)>=0.05?'fund-warn':''}">${fund}%</td>
+                        <td style="width: 100px;">
+                            <div style="font-size:12px; text-align:right">${dist}%</div>
+                            <div class="progress-bg"><div class="progress-bar" style="width:${Math.max(0, 100-(dist*40))}%"></div></div>
+                        </td>
+                    </tr>
+                `;
+                listBody.insertAdjacentHTML('beforeend', row);
+            }
+        } catch (e) {}
+    }
+
+    setInterval(getMarket, 5000);
+    setInterval(main, 30000);
+    getMarket(); main();
+</script>
+</body>
+</html>
