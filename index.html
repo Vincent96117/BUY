@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V178-X 鋼鐵指揮官 V1.9.5</title>
+    <title>V178-X 鋼鐵指揮官 V1.9.7</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -11,27 +11,26 @@
         .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; align-items: end; }
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
         select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; box-sizing: border-box; }
-        .audio-btn { background: var(--ready); color: #000; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; height: 38px; }
-
+        .audio-btn { background: var(--ready); color: #000; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; height: 38px; width: 100%; }
+        
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 12px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
         
-        .manual-locked { background: rgba(246, 70, 93, 0.12) !important; border-left: 5px solid var(--entry) !important; }
-        .auto-locked { background: rgba(46, 189, 133, 0.08); border-left: 4px solid var(--hold); }
+        .manual-locked { background: rgba(246, 70, 93, 0.1) !important; border-left: 5px solid var(--entry) !important; }
         .symbol-btn { cursor: pointer; text-decoration: underline; color: #fff; font-weight: bold; font-size: 16px; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         
-        .READY { background: rgba(240, 185, 11, 0.25); color: var(--ready); border: 1px solid var(--ready); animation: flash 1.5s infinite; }
-        .ENTRY { background: var(--entry); color: #fff; border: 1px solid #fff; box-shadow: 0 0 10px var(--entry); animation: pulse 0.5s infinite alternate; }
-        .SCAN { background: rgba(71, 77, 87, 0.1); color: var(--scan); border: 1px solid var(--scan); }
+        .READY { background: rgba(240, 185, 11, 0.3); color: var(--ready); border: 1px solid var(--ready); animation: flash 1s infinite; }
+        .ENTRY { background: var(--entry); color: #fff; border: 1px solid #fff; box-shadow: 0 0 15px var(--entry); animation: pulse 0.5s infinite alternate; }
+        .SCAN { background: rgba(71, 77, 87, 0.2); color: var(--scan); }
 
-        .time-tag { font-size: 10px; color: #aaa; display: block; margin-top: 4px; font-family: monospace; }
+        .time-tag { font-size: 10px; color: #aaa; display: block; margin-top: 4px; }
         .unlock-btn { background: #444; color: #ff4d4d; border: none; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 9px; margin-left: 5px; }
         .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
         
-        @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.03); } }
+        @keyframes flash { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
     </style>
 </head>
 <body>
@@ -41,8 +40,8 @@
         <div>
             <label>結構週期</label>
             <select id="lookbackDays">
-                <option value="3" selected>3 天 (靈敏)</option>
-                <option value="7">7 天 (穩健)</option>
+                <option value="3" selected>3 天 (抓小浪)</option>
+                <option value="7">7 天 (穩健型)</option>
             </select>
         </div>
         <div>
@@ -50,20 +49,17 @@
             <input type="number" id="fundThreshold" value="-0.02" step="0.01">
         </div>
         <div>
-            <label>成交額過濾 (M)</label>
-            <input type="number" id="volThreshold" value="5" step="1">
-        </div>
-        <div>
             <label>音效開關</label>
             <button id="enableAudio" class="audio-btn">📢 啟動監控</button>
         </div>
+        <div style="font-size: 11px; color: #888;">已排除殭屍幣 & 大幣</div>
     </div>
 
     <table>
         <thead>
             <tr>
-                <th>幣種 (點擊鎖定)</th>
-                <th>前高/現價</th>
+                <th>幣種 (鎖定)</th>
+                <th>前高/當前</th>
                 <th>指令 (觸發時間)</th>
                 <th>資費</th>
                 <th>引力距離 ↓</th>
@@ -74,12 +70,13 @@
 </div>
 
 <script>
-    // 嚴格過濾黑名單 [cite: 2026-01-12]
+    // 嚴格黑名單 [cite: 2026-01-12]
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     
     let audioEnabled = false;
     let lockedSymbols = {}; 
     const readyAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3');
+    const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
 
     document.getElementById('enableAudio').addEventListener('click', function() {
         audioEnabled = !audioEnabled;
@@ -89,7 +86,7 @@
 
     function toggleLock(symbol) {
         if (lockedSymbols[symbol]) delete lockedSymbols[symbol];
-        else lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: true, lastSt: 'SCAN' };
+        else lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: true };
         update();
     }
 
@@ -106,84 +103,69 @@
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
-            const volLimit = parseFloat(document.getElementById('volThreshold').value) * 1000000;
             
-            // 關鍵：直接請求合約市場 Ticker 資訊
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
-            const allTickers = await tickerR.json();
+            const tickers = await tickerR.json();
             
-            // 過濾：1. USDT結尾 2. 非黑名單 3. 成交量足夠或是已鎖定
-            let activeTickers = allTickers.filter(t => 
-                t.symbol.endsWith('USDT') && 
-                !blacklist.includes(t.symbol) && 
-                (parseFloat(t.quoteVolume) > volLimit || lockedSymbols[t.symbol])
-            );
-
             let coinData = [];
-            let playR = false;
+            let playE = false, playR = false;
 
-            // 只處理成交量前 50 的標的，提高效能
-            for (let ticker of activeTickers.sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50)) {
-                const highVal = await getHigh(ticker.symbol, days);
-                const curPrice = parseFloat(ticker.lastPrice);
-                if(highVal === 0) continue; 
+            for (let t of tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol))) {
+                const curPrice = parseFloat(t.lastPrice);
+                const vol = parseFloat(t.quoteVolume);
+                
+                // 1. 基本成交量過濾 (M)
+                if (vol < 5000000 && !lockedSymbols[t.symbol]) continue;
 
-                const dist = ((highVal - curPrice) / curPrice * 100);
-                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${ticker.symbol}`);
+                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
+                // 2. 殭屍幣過濾：排除資費死掉的 (0.0000%) 標的
+                if (fund === "0.0000" && vol < 10000000 && !lockedSymbols[t.symbol]) continue;
+
+                const highVal = await getHigh(t.symbol, days);
+                const dist = ((highVal - curPrice) / curPrice * 100);
+
                 let stCmd = "SCAN";
-                // 進入 ENTRY 或 READY 邏輯
-                if (curPrice > highVal && fund <= fundLimit) stCmd = "ENTRY";
+                if (curPrice > highVal && fund <= fundLimit) { stCmd = "ENTRY"; playE = true; }
                 else if (dist < 1.5 && dist > -0.5 && fund <= fundLimit) { stCmd = "READY"; playR = true; }
 
-                // 自動與手動鎖定狀態同步
-                if ((stCmd === "READY" || stCmd === "ENTRY") && !lockedSymbols[ticker.symbol]) {
-                    lockedSymbols[ticker.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
+                if ((stCmd === "READY" || stCmd === "ENTRY") && !lockedSymbols[t.symbol]) {
+                    lockedSymbols[t.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
                 }
-                if (lockedSymbols[ticker.symbol]) lockedSymbols[ticker.symbol].lastSt = stCmd;
+                if (lockedSymbols[t.symbol]) lockedSymbols[t.symbol].lastSt = stCmd;
 
-                coinData.push({ symbol: ticker.symbol, highVal, curPrice, dist, fund, stCmd });
+                coinData.push({ symbol: t.symbol, highVal, curPrice, dist, fund, stCmd });
             }
 
-            if (audioEnabled && playR) readyAudio.play();
+            if (audioEnabled) { if(playE) entryAudio.play(); else if(playR) readyAudio.play(); }
 
-            // 排序：鎖定優先 > 距離
-            coinData.sort((a, b) => {
-                const aL = lockedSymbols[a.symbol] ? (lockedSymbols[a.symbol].manual ? 2 : 1) : 0;
-                const bL = lockedSymbols[b.symbol] ? (lockedSymbols[b.symbol].manual ? 2 : 1) : 0;
-                return bL - aL || a.dist - b.dist;
-            });
+            coinData.sort((a, b) => (lockedSymbols[b.symbol]?1:0) - (lockedSymbols[a.symbol]?1:0) || a.dist - b.dist);
 
             const listBody = document.getElementById('list');
             listBody.innerHTML = '';
 
-            for (let coin of coinData) {
+            for (let coin of coinData.slice(0, 30)) {
                 const lock = lockedSymbols[coin.symbol];
                 const fundClass = Math.abs(parseFloat(coin.fund)) >= 0.05 ? 'fund-warn' : '';
+                const displaySt = lock ? lock.lastSt : coin.stCmd;
 
                 listBody.insertAdjacentHTML('beforeend', `
-                    <tr class="${lock ? (lock.manual ? 'manual-locked' : 'auto-locked') : ''}">
+                    <tr class="${lock?.manual ? 'manual-locked' : ''}">
+                        <td><span class="symbol-btn" onclick="toggleLock('${coin.symbol}')">${coin.symbol.replace('USDT','')}</span></td>
+                        <td><div style="font-size:10px;color:#666">H:${coin.highVal}</div><div>${coin.curPrice}</div></td>
                         <td>
-                            <span class="symbol-btn" onclick="toggleLock('${coin.symbol}')">${coin.symbol.replace('USDT','')}</span>
-                        </td>
-                        <td>
-                            <div style="font-size:11px; color:#888;">H: ${coin.highVal}</div>
-                            <div style="font-family:monospace; font-weight:bold; color:#fff">${coin.curPrice}</div>
-                        </td>
-                        <td>
-                            <span class="status-badge ${lock ? lock.lastSt : coin.stCmd}">${lock ? lock.lastSt : coin.stCmd}</span>
-                            ${lock ? `<span class="time-tag">⏱ ${lock.time} ${lock.manual?'📌':''}<button class="unlock-btn" onclick="toggleLock('${coin.symbol}')">解鎖</button></span>` : ''}
+                            <span class="status-badge ${displaySt}">${displaySt}</span>
+                            ${lock ? `<div class="time-tag">⏱ ${lock.time} ${lock.manual?'📌':''}<button class="unlock-btn" onclick="toggleLock('${coin.symbol}')">解</button></div>` : ''}
                         </td>
                         <td class="${fundClass}">${coin.fund}%</td>
-                        <td style="font-weight:bold; color:${coin.dist < 1.5 ? 'var(--ready)' : '#888'}">${coin.dist.toFixed(2)}%</td>
+                        <td style="font-weight:bold;color:${coin.dist<1.5?'#f0b90b':''}">${coin.dist.toFixed(2)}%</td>
                     </tr>
                 `);
             }
         } catch (e) {}
     }
-
     setInterval(update, 30000);
     update();
 </script>
