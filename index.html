@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>V178-X 鋼鐵指揮官 V1.9.3 (永不遺失版)</title>
+    <title>V178-X 鋼鐵指揮官 V1.9.5</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -18,7 +18,7 @@
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
         
         .manual-locked { background: rgba(246, 70, 93, 0.12) !important; border-left: 5px solid var(--entry) !important; }
-        .auto-locked { background: rgba(46, 189, 133, 0.08); border-left: 5px solid var(--hold); }
+        .auto-locked { background: rgba(46, 189, 133, 0.08); border-left: 4px solid var(--hold); }
         .symbol-btn { cursor: pointer; text-decoration: underline; color: #fff; font-weight: bold; font-size: 16px; }
         .status-badge { padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 12px; display: inline-block; }
         
@@ -47,23 +47,23 @@
         </div>
         <div>
             <label>資費門檻 (%)</label>
-            <input type="number" id="fundThreshold" value="-0.03" step="0.01">
+            <input type="number" id="fundThreshold" value="-0.02" step="0.01">
         </div>
         <div>
-            <label>音效提示</label>
-            <button id="enableAudio" class="audio-btn">📢 啟動監控</button>
+            <label>成交額過濾 (M)</label>
+            <input type="number" id="volThreshold" value="5" step="1">
         </div>
-        <div style="text-align: right; font-size: 11px; color: #888;">
-            點擊幣名手動鎖定<br>
-            已鎖定: <span id="lockCount">0</span>
+        <div>
+            <label>音效開關</label>
+            <button id="enableAudio" class="audio-btn">📢 啟動監控</button>
         </div>
     </div>
 
     <table>
         <thead>
             <tr>
-                <th>幣種 (鎖定)</th>
-                <th>觀察價/當前價</th>
+                <th>幣種 (點擊鎖定)</th>
+                <th>前高/現價</th>
                 <th>指令 (觸發時間)</th>
                 <th>資費</th>
                 <th>引力距離 ↓</th>
@@ -74,13 +74,12 @@
 </div>
 
 <script>
-    // 過濾黑名單 [cite: 2026-01-12]
+    // 嚴格過濾黑名單 [cite: 2026-01-12]
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "DOTUSDT", "SHIBUSDT", "TONUSDT", "LINKUSDT", "BCHUSDT", "NEARUSDT", "MATICUSDT", "LTCUSDT", "PEPEUSDT", "UNIUSDT", "ICPUSDT", "RENDERUSDT", "APTUSDT", "HBARUSDT", "ARBUSDT", "SUIUSDT"];
     
     let audioEnabled = false;
-    let lockedSymbols = {}; // { 'SANDUSDT': { time: '...', manual: true, lastSt: '...' } }
+    let lockedSymbols = {}; 
     const readyAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3');
-    const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
 
     document.getElementById('enableAudio').addEventListener('click', function() {
         audioEnabled = !audioEnabled;
@@ -99,8 +98,7 @@
         try {
             const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=${limit + 1}`);
             const d = await r.json();
-            const history = d.slice(0, limit);
-            return Math.max(...history.map(k => parseFloat(k[2])));
+            return Math.max(...d.slice(0, limit).map(k => parseFloat(k[2])));
         } catch(e) { return 0; }
     }
 
@@ -108,91 +106,82 @@
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
+            const volLimit = parseFloat(document.getElementById('volThreshold').value) * 1000000;
             
+            // 關鍵：直接請求合約市場 Ticker 資訊
             const tickerR = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const allTickers = await tickerR.json();
             
-            // 1. 先把所有手動鎖定的幣種列入清單，不論成交量
-            let targetSymbols = new Set(Object.keys(lockedSymbols));
-            
-            // 2. 加入成交量前 40 的幣種
-            allTickers
-                .filter(c => c.symbol.endsWith('USDT') && !blacklist.includes(c.symbol))
-                .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-                .slice(0, 40)
-                .forEach(c => targetSymbols.add(c.symbol));
+            // 過濾：1. USDT結尾 2. 非黑名單 3. 成交量足夠或是已鎖定
+            let activeTickers = allTickers.filter(t => 
+                t.symbol.endsWith('USDT') && 
+                !blacklist.includes(t.symbol) && 
+                (parseFloat(t.quoteVolume) > volLimit || lockedSymbols[t.symbol])
+            );
 
             let coinData = [];
-            let playE = false, playR = false;
+            let playR = false;
 
-            for (let symbol of targetSymbols) {
-                const ticker = allTickers.find(t => t.symbol === symbol);
-                if (!ticker) continue;
-
-                const highVal = await getHigh(symbol, days);
+            // 只處理成交量前 50 的標的，提高效能
+            for (let ticker of activeTickers.sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50)) {
+                const highVal = await getHigh(ticker.symbol, days);
                 const curPrice = parseFloat(ticker.lastPrice);
+                if(highVal === 0) continue; 
+
                 const dist = ((highVal - curPrice) / curPrice * 100);
-                
-                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+                const fundR = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${ticker.symbol}`);
                 const fundD = await fundR.json();
                 const fund = (parseFloat(fundD.lastFundingRate) * 100).toFixed(4);
 
                 let stCmd = "SCAN";
-                if (curPrice > highVal && fund <= fundLimit) { stCmd = "ENTRY"; playE = true; }
+                // 進入 ENTRY 或 READY 邏輯
+                if (curPrice > highVal && fund <= fundLimit) stCmd = "ENTRY";
                 else if (dist < 1.5 && dist > -0.5 && fund <= fundLimit) { stCmd = "READY"; playR = true; }
 
-                // 更新鎖定清單狀態
-                if (stCmd === "READY" || stCmd === "ENTRY") {
-                    if (!lockedSymbols[symbol]) {
-                        lockedSymbols[symbol] = { time: new Date().toLocaleTimeString(), manual: false };
-                    }
+                // 自動與手動鎖定狀態同步
+                if ((stCmd === "READY" || stCmd === "ENTRY") && !lockedSymbols[ticker.symbol]) {
+                    lockedSymbols[ticker.symbol] = { time: new Date().toLocaleTimeString(), manual: false };
                 }
-                if (lockedSymbols[symbol]) lockedSymbols[symbol].lastSt = stCmd;
+                if (lockedSymbols[ticker.symbol]) lockedSymbols[ticker.symbol].lastSt = stCmd;
 
-                coinData.push({ symbol, highVal, curPrice, dist, fund, stCmd });
+                coinData.push({ symbol: ticker.symbol, highVal, curPrice, dist, fund, stCmd });
             }
 
-            if (audioEnabled) { if(playE) entryAudio.play(); else if(playR) readyAudio.play(); }
+            if (audioEnabled && playR) readyAudio.play();
 
-            // 排序：手動鎖定(2) > 自動鎖定(1) > 引力距離
+            // 排序：鎖定優先 > 距離
             coinData.sort((a, b) => {
                 const aL = lockedSymbols[a.symbol] ? (lockedSymbols[a.symbol].manual ? 2 : 1) : 0;
                 const bL = lockedSymbols[b.symbol] ? (lockedSymbols[b.symbol].manual ? 2 : 1) : 0;
-                if (aL !== bL) return bL - aL;
-                return a.dist - b.dist;
+                return bL - aL || a.dist - b.dist;
             });
 
             const listBody = document.getElementById('list');
             listBody.innerHTML = '';
-            document.getElementById('lockCount').innerText = Object.keys(lockedSymbols).length;
 
             for (let coin of coinData) {
-                const lockInfo = lockedSymbols[coin.symbol];
-                const displaySt = lockInfo ? lockInfo.lastSt : coin.stCmd;
-                // 資費正負 0.05 變色 [cite: 2026-01-11]
+                const lock = lockedSymbols[coin.symbol];
                 const fundClass = Math.abs(parseFloat(coin.fund)) >= 0.05 ? 'fund-warn' : '';
 
-                const row = `
-                    <tr class="${lockInfo ? (lockInfo.manual ? 'manual-locked' : 'auto-locked') : ''}">
+                listBody.insertAdjacentHTML('beforeend', `
+                    <tr class="${lock ? (lock.manual ? 'manual-locked' : 'auto-locked') : ''}">
                         <td>
                             <span class="symbol-btn" onclick="toggleLock('${coin.symbol}')">${coin.symbol.replace('USDT','')}</span>
-                            <div style="font-size:10px; color:#666">${days}D High: ${coin.highVal}</div>
                         </td>
                         <td>
-                            <div style="font-size:11px; color:#888; text-decoration: line-through;">${coin.highVal}</div>
+                            <div style="font-size:11px; color:#888;">H: ${coin.highVal}</div>
                             <div style="font-family:monospace; font-weight:bold; color:#fff">${coin.curPrice}</div>
                         </td>
                         <td>
-                            <span class="status-badge ${displaySt}">${displaySt}</span>
-                            ${lockInfo ? `<span class="time-tag">⏱ ${lockInfo.time} ${lockInfo.manual?'📌':''}<button class="unlock-btn" onclick="toggleLock('${coin.symbol}')">解鎖</button></span>` : ''}
+                            <span class="status-badge ${lock ? lock.lastSt : coin.stCmd}">${lock ? lock.lastSt : coin.stCmd}</span>
+                            ${lock ? `<span class="time-tag">⏱ ${lock.time} ${lock.manual?'📌':''}<button class="unlock-btn" onclick="toggleLock('${coin.symbol}')">解鎖</button></span>` : ''}
                         </td>
                         <td class="${fundClass}">${coin.fund}%</td>
                         <td style="font-weight:bold; color:${coin.dist < 1.5 ? 'var(--ready)' : '#888'}">${coin.dist.toFixed(2)}%</td>
                     </tr>
-                `;
-                listBody.insertAdjacentHTML('beforeend', row);
+                `);
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {}
     }
 
     setInterval(update, 30000);
