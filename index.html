@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V2.1 (科學數據穩定版)</title>
+    <title>V178-X 鋼鐵指揮官 V2.1.1 (終極排錯版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; }
@@ -22,7 +22,8 @@
         .ENTRY { background: var(--entry); color: #fff; animation: pulse 0.5s infinite alternate; }
         .HOLD { background: var(--hold); color: #fff; border: 1px solid #fff; box-shadow: 0 0 10px var(--hold); }
         .SCAN { color: var(--scan); }
-        .fund-warn { color: #00ffff; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
+        /* 資費正負 0.05 變色邏輯 */
+        .fund-warn { color: #00ffff !important; text-shadow: 0 0 5px #00ffff; font-weight: bold; }
         @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
     </style>
 </head>
@@ -30,18 +31,18 @@
 
 <div class="container">
     <div class="control-panel">
-        <div><label>週期</label><select id="lookbackDays"><option value="3" selected>3 天</option><option value="7">7 天</option></select></div>
+        <div><label>結構週期</label><select id="lookbackDays"><option value="3" selected>3 天</option><option value="7">7 天</option></select></div>
         <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
-        <div><label>音效</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
+        <div><label>音效開關</label><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
     </div>
 
     <div class="timer-bar">
-        <span>系統時間：<b id="lastUpdate">數據初始化中...</b></span>
+        <span>系統時間：<b id="lastUpdate">初始化中 (需 60 秒累積數據)...</b></span>
         <span id="nextRefresh">下次刷新：15s</span>
     </div>
 
     <table>
-        <thead><tr><th>幣種 (鎖定)</th><th>當前/前高</th><th>狀態</th><th>資費 (🔥趨勢)</th><th>持倉 OI 變動</th><th>引力</th></tr></thead>
+        <thead><tr><th>幣種 (鎖定)</th><th>當前/前高</th><th>狀態</th><th>資費 (🔥趨勢)</th><th>持倉 OI 變動</th><th>引力距離</th></tr></thead>
         <tbody id="list"></tbody>
     </table>
 </div>
@@ -78,6 +79,7 @@
             
             const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const tickers = await r.json();
+            // 基本過濾：USDT結尾、非黑名單、量大於 500 萬
             const active = tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol) && parseFloat(x.quoteVolume) > 5000000)
                                  .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50);
 
@@ -103,18 +105,24 @@
                     historyData[t.symbol].push({ fund, oi });
                     if (historyData[t.symbol].length > 4) historyData[t.symbol].shift();
 
-                    // 數據不足一分鐘，先不顯示該幣種，避免 NaN
+                    // 數據完整性檢查：未滿 4 次數據（一分鐘）前不顯示
                     if (historyData[t.symbol].length < 4) return null;
 
                     const oldData = historyData[t.symbol][0];
+                    if (!oldData || !oldData.oi) return null;
+
                     const fundExpanding = fund < oldData.fund; 
                     const oiChange = ((oi - oldData.oi) / oldData.oi * 100);
+
+                    // 物理級 NaN 排除：如果計算結果無效，直接刪除此列
+                    if (isNaN(oiChange) || !isFinite(oiChange)) return null;
 
                     let stCmd = "SCAN";
                     const fundOk = fund <= fundLimit;
 
                     if (curPrice > highVal && fundOk) {
-                        if (fundExpanding || oiChange > 0.5 || Math.abs(oiChange) < 1) {
+                        // 綠燈判定：1.資費擴大 2.持倉量增加 3.籌碼鎖定(量縮整理)
+                        if (fundExpanding || oiChange > 0.5 || (Math.abs(oiChange) < 1)) {
                             stCmd = "HOLD";
                         } else {
                             stCmd = "ENTRY";
@@ -139,6 +147,7 @@
     function updateUI() {
         if (!window.currentResults) return;
         const results = [...window.currentResults].sort((a, b) => {
+            // 排序邏輯：1.鎖定優先 2.狀態優先 (ENTRY > HOLD > READY) 3.距離
             if (lockedSymbols[a.symbol] && !lockedSymbols[b.symbol]) return -1;
             if (!lockedSymbols[a.symbol] && lockedSymbols[b.symbol]) return 1;
             const s = { 'ENTRY': 0, 'HOLD': 1, 'READY': 2, 'SCAN': 3 };
