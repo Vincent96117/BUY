@@ -1,30 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>V2.8 鋼鐵指揮官 - 釘選持久版</title>
+    <title>鋼鐵指揮官 V2.99 - 嘎空糾察隊專用版</title>
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px; border: 1px solid #333; text-align: left; }
-        .SCAN { color: #666; font-weight: normal; } /* 條件消失變灰 */
+        .SCAN { color: #666; }
         .READY { color: #ffeb3b; font-weight: bold; background: rgba(255, 235, 59, 0.1); }
-        .ENTRY { color: #fff; background: #ff0000; font-weight: bold; animation: pulse 0.6s infinite; }
+        .ENTRY { color: #fff; background: #ff0000; font-weight: bold; animation: pulse 0.5s infinite; }
         .HOLD { color: #00ff00; font-weight: bold; background: rgba(0, 255, 0, 0.1); }
-        .pinned { background: #2a2a2a !important; border-left: 4px solid #ffeb3b !important; }
-        @keyframes pulse { 0% { background: #ff0000; } 50% { background: #b71c1c; } 100% { background: #ff0000; } }
-        button { padding: 5px 12px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; }
-        .btn-pin { background: #444; color: white; margin-right: 5px; }
+        .pinned { background: #2a2a2a !important; border-left: 5px solid #ffeb3b !important; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; }
+        .btn-pin { padding: 5px 10px; background: #444; color: white; }
         .btn-pin.active { background: #ffeb3b; color: black; }
-        #status { color: #00ffff; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="dashboard">
-        <div style="font-size: 20px; font-weight: bold; color: #ff4444;">V2.8 COMMANDER</div>
-        <button style="background: #d32f2f; color: white; padding: 10px 20px;" onclick="toggleSystem()" id="startBtn">🚀 啟動</button>
-        <div id="status">等待啟動...</div>
+        <div style="font-size: 20px; font-weight: bold; color: #ffeb3b;">嘎空糾察隊 V2.99</div>
+        <button style="background: #d32f2f; color: white;" onclick="toggleSystem()" id="startBtn">🚀 啟動監控</button>
+        <button style="background: #0088cc; color: white; margin-left: 10px;" onclick="testPush()">🧪 測試手機推播</button>
+        <div id="status" style="margin-left: auto; color: #00ffff; font-weight: bold;">連線已就緒</div>
     </div>
 
     <table>
@@ -44,27 +44,38 @@
     </table>
 
 <script>
-    const BARK_KEY = "E96538f9eaef0eaec0fe65be1e6dc3738e08122150839671e3f654cd81633dcd";
-    const BLACKLIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'BNXUSDT'];
+    // --- 🏮 參數已鎖定 ---
+    const CONFIG = {
+        PO_USER: "ujvjr6wvzezvj3d78w2jgcqgon4ub",
+        PO_TOKEN: "acyoe3sz15x4n91r1349fdcau7x6pw",
+        BLACKLIST: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'BNXUSDT']
+    };
+
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
 
-    function speak(text) {
+    async function sendPush(title, message) {
+        const body = new URLSearchParams({
+            token: CONFIG.PO_TOKEN,
+            user: CONFIG.PO_USER,
+            title: title,
+            message: message,
+            priority: 1, 
+            sound: 'classical'
+        });
+        fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: body }).catch(e => {});
+        
         window.speechSynthesis.cancel();
-        const msg = new SpeechSynthesisUtterance(text);
+        const msg = new SpeechSynthesisUtterance(title);
         msg.lang = 'zh-TW';
         window.speechSynthesis.speak(msg);
     }
 
-    async function sendBark(title, body) {
-        const t = title.replace(/[^a-zA-Z0-9]/g, "");
-        const b = body.replace(/[^a-zA-Z0-9]/g, "");
-        fetch(`https://api.day.app/${BARK_KEY}/${t}/${b}?group=Trade`).catch(e => {});
-    }
+    function testPush() { sendPush("測試成功", "糾察隊報告：手機推播連線正常！"); alert("測試已送出，請看手機！"); }
 
     function togglePin(symbol) {
         if (pinnedSymbols.has(symbol)) pinnedSymbols.delete(symbol);
         else pinnedSymbols.add(symbol);
-        render(); // 立即重新渲染
+        render();
     }
 
     async function getSingleOI(symbol) {
@@ -78,8 +89,8 @@
     async function get3DHigh(symbol) {
         try {
             const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=3`);
-            const klines = await res.json();
-            return Math.max(...klines.map(k => parseFloat(k[2])));
+            const data = await res.json();
+            return Math.max(...data.map(k => parseFloat(k[2])));
         } catch (e) { return null; }
     }
 
@@ -92,111 +103,77 @@
             ]);
             const prices = await pRes.json(), funds = await fRes.json();
 
-            // 1. 找出當前符合資費門檻的
             const eligible = funds.filter(f => 
-                f.symbol.endsWith('USDT') && !BLACKLIST.includes(f.symbol) && parseFloat(f.lastFundingRate) <= -0.0002
+                f.symbol.endsWith('USDT') && !CONFIG.BLACKLIST.includes(f.symbol) && Math.abs(parseFloat(f.lastFundingRate)) >= 0.0005
             ).map(f => f.symbol);
 
-            // 2. 綜合所有需要處理的幣（符合條件的 + 已經被釘選的）
             const symbolsToProcess = new Set([...eligible, ...pinnedSymbols]);
 
             for (let symbol of symbolsToProcess) {
-                // 抓取基礎數據
                 if (!allData[symbol]) {
                     const high = await get3DHigh(symbol);
-                    if (high) allData[symbol] = { high };
-                    else continue;
+                    if (high) allData[symbol] = { high }; else continue;
                 }
-                
                 const currentOI = await getSingleOI(symbol);
                 if (currentOI === null) continue;
 
                 const fInfo = funds.find(f => f.symbol === symbol);
                 const pInfo = prices.find(p => p.symbol === symbol);
-                if (!fInfo || !pInfo) continue;
-
-                const threeDayHigh = allData[symbol].high;
-                const curPrice = parseFloat(pInfo.price);
-                const fundRate = (parseFloat(fInfo.lastFundingRate) * 100).toFixed(4);
-                const dist = (((threeDayHigh - curPrice) / threeDayHigh) * 100);
-                const oiChange = lastOI[symbol] ? ((currentOI - lastOI[symbol]) / lastOI[symbol] * 100) : 0;
+                
+                const high = allData[symbol].high;
+                const price = parseFloat(pInfo.price);
+                const fund = (parseFloat(fInfo.lastFundingRate) * 100).toFixed(4);
+                const dist = ((high - price) / high * 100).toFixed(2);
+                const oiChange = lastOI[symbol] ? ((currentOI - lastOI[symbol]) / lastOI[symbol] * 100).toFixed(2) : 0;
                 lastOI[symbol] = currentOI;
 
-                let oldStatus = notifiedStatus[symbol] || "SCAN";
-                let stCmd = "SCAN";
+                let st = "SCAN";
+                let old = notifiedStatus[symbol] || "SCAN";
 
-                // --- 狀態核心邏輯 ---
-                // A. 如果之前是 ENTRY/HOLD，進入單向鎖定
-                if (oldStatus === "ENTRY" || oldStatus === "HOLD") {
-                    if (curPrice >= threeDayHigh * 0.99 && oiChange > -1.5) {
-                        stCmd = "HOLD";
-                    } else {
-                        stCmd = "SCAN"; 
-                    }
-                } 
-                // B. 初始判定（必須在負資費清單中才判斷 READY/ENTRY）
-                else if (eligible.includes(symbol)) {
-                    if (curPrice >= threeDayHigh) stCmd = "ENTRY"; 
-                    else if (dist <= 1.5 && dist > 0 && oiChange > 0.8) stCmd = "ENTRY";
-                    else if (dist <= 1.5 && dist > 0) stCmd = "READY";
+                // V2.8 鎖定邏輯
+                if (old === "ENTRY" || old === "HOLD") {
+                    if (price >= high * 0.99 && oiChange > -1.5) st = "HOLD";
+                } else if (eligible.includes(symbol)) {
+                    if (price >= high || (dist <= 1.5 && oiChange > 0.8)) st = "ENTRY";
+                    else if (dist <= 1.5) st = "READY";
                 }
 
-                // 更新數據
-                if (!signalTimes[symbol] && stCmd !== "SCAN") signalTimes[symbol] = new Date().toLocaleTimeString();
+                if (st !== "SCAN" && !signalTimes[symbol]) signalTimes[symbol] = new Date().toLocaleTimeString();
                 
-                // 推播邏輯
-                if (notifiedStatus[symbol] !== stCmd && stCmd !== "SCAN") {
-                    sendBark(stCmd + symbol, "D" + dist.toFixed(2) + "F" + fundRate);
-                    speak(symbol + stCmd);
+                if (st !== old && st !== "SCAN") {
+                    sendPush(`${st}: ${symbol}`, `價: ${price} | 距: ${dist}% | 資費: ${fund}% | OI: ${oiChange}%`);
                 }
-                notifiedStatus[symbol] = stCmd;
-
-                allData[symbol].row = { 
-                    time: signalTimes[symbol] || "--", 
-                    symbol: symbol, 
-                    curPrice, 
-                    high: threeDayHigh, 
-                    dist: dist.toFixed(2), 
-                    fundRate, 
-                    stCmd, 
-                    oiChange: oiChange.toFixed(2) 
-                };
+                notifiedStatus[symbol] = st;
+                allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange };
             }
 
-            // 3. 清理：如果條件消失且沒釘選，才從 allData 刪除
             Object.keys(allData).forEach(s => {
                 if (!eligible.includes(s) && !pinnedSymbols.has(s) && notifiedStatus[s] === "SCAN") {
-                    delete allData[s];
-                    delete signalTimes[s];
-                    delete notifiedStatus[s];
+                    delete allData[s]; delete signalTimes[s]; delete notifiedStatus[s];
                 }
             });
-
             render();
-            document.getElementById('status').innerText = "✅ 監控中";
+            document.getElementById('status').innerText = "✅ 監控中 (10s)";
         } catch (e) { console.error(e); }
     }
 
     function render() {
-        const body = document.getElementById('radarBody');
         const rows = Object.values(allData).filter(d => d.row).map(d => d.row);
-        
-        const sortedRows = rows.sort((a, b) => {
-            if (pinnedSymbols.has(a.symbol) && !pinnedSymbols.has(b.symbol)) return -1;
-            if (!pinnedSymbols.has(a.symbol) && pinnedSymbols.has(b.symbol)) return 1;
+        const sorted = rows.sort((a, b) => {
+            if (pinnedSymbols.has(a.symbol)) return -1;
+            if (pinnedSymbols.has(b.symbol)) return 1;
             return a.dist - b.dist;
         });
-
-        body.innerHTML = sortedRows.map(c => `
+        document.getElementById('radarBody').innerHTML = sorted.map(c => `
             <tr class="${pinnedSymbols.has(c.symbol) ? 'pinned' : ''}">
                 <td><button class="btn-pin ${pinnedSymbols.has(c.symbol) ? 'active' : ''}" onclick="togglePin('${c.symbol}')">📌</button></td>
-                <td style="color:#00ffff">${c.time}</td>
+                <td>${c.time}</td>
                 <td><b>${c.symbol}</b></td>
-                <td>${c.curPrice} / ${c.high}</td>
+                <td>${c.price} / ${c.high}</td>
                 <td style="color:${c.dist < 0 ? '#00ff00' : '#ff4444'}">${c.dist}%</td>
-                <td style="color:#ff00ff">${c.fundRate}%</td>
-                <td class="${c.stCmd}">${c.stCmd}</td>
-                <td style="color:${c.oiChange > 0 ? '#ff4444' : '#00ff00'}">${c.oiChange}%</td>
+                <td>${c.fund}%</td>
+                <td class="${c.st}">${c.st}</td>
+                <td>${c.oiChange}%</td>
             </tr>
         `).join('');
     }
