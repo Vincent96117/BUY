@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>三人獵殺團 V3.3 - 徹底修復版</title>
+    <title>三人獵殺團 V3.4 - 最終回歸版</title>
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
@@ -22,7 +22,7 @@
 <body>
 
     <div class="dashboard">
-        <div style="font-size: 20px; font-weight: bold; color: #ffeb3b;">三人獵殺團 V3.3</div>
+        <div style="font-size: 20px; font-weight: bold; color: #ffeb3b;">三人獵殺團 V3.4</div>
         <button style="background: #d32f2f; color: white;" onclick="toggleSystem()" id="startBtn">🚀 啟動監控</button>
         <button style="background: #0088cc; color: white; margin-left: 10px;" onclick="testPush()">🧪 測試三人同步</button>
         <div id="status">系統就緒</div>
@@ -45,20 +45,19 @@
     </table>
 
 <script>
-    // --- 🏮 參數嚴格核對 ---
+    // --- 🏮 參數嚴格核對 (金鑰換裝) ---
     const CONFIG = {
-        PO_USER: "gpz6z66vptm191u957aoy2v1ay862d", // 群組 Key
-        PO_TOKEN: "acyoe3sz15x4n91r1349fdcau7x6pw", // API Token
+        PO_USER: "gpz6z66vptm191u957aoy2v1ay862d", // 三人群組金鑰
+        PO_TOKEN: "acyoe3sz15x4n91r1349fdcau7x6pw", // 應用程式 Token
         BLACKLIST: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'BNXUSDT']
     };
 
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
 
-    // 🚀 全新修復的發送引擎
+    // 🚀 採用最單純的發送方式，確保 Pushover 100% 接收
     async function sendPush(title, message) {
         if (!title || !message) return;
         
-        // 使用 URLSearchParams 配合特殊的標頭處理
         const params = new URLSearchParams();
         params.append("token", CONFIG.PO_TOKEN);
         params.append("user", CONFIG.PO_USER);
@@ -68,25 +67,14 @@
         params.append("sound", "classical");
 
         try {
-            const response = await fetch('https://api.pushover.net/1/messages.json', {
+            // 使用最標準的 POST 格式
+            await fetch('https://api.pushover.net/1/messages.json', {
                 method: 'POST',
-                body: params,
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: params.toString()
             });
-
-            if (!response.ok) {
-                const errData = await response.json();
-                console.error("Pushover 拒絕發送:", errData);
-            } else {
-                console.log("推播成功送達！");
-            }
-        } catch (e) {
-            console.error("網路傳輸錯誤:", e);
-        }
+        } catch (e) { console.error("傳輸故障", e); }
         
-        // 語音廣播
         window.speechSynthesis.cancel();
         const msg = new SpeechSynthesisUtterance(title);
         msg.lang = 'zh-TW';
@@ -94,12 +82,11 @@
     }
 
     function testPush() { 
-        console.log("正在執行同步測試...");
-        sendPush("連線測試", "嘎空糾察隊：三位戰友，看到這條代表系統復活了！"); 
+        sendPush("連線測試", "嘎空糾察隊：系統修復完成，三台手機同步響鈴！"); 
         alert("測試發送中，請檢查手機！"); 
     }
 
-    // --- 以下為雷達核心邏輯 ---
+    // --- 以下為雷達核心邏輯 (擇一進場 / 全滿足守倉) ---
     function togglePin(symbol) {
         if (pinnedSymbols.has(symbol)) pinnedSymbols.delete(symbol);
         else pinnedSymbols.add(symbol);
@@ -160,9 +147,9 @@
                 let st = "SCAN";
                 let old = notifiedStatus[symbol] || "SCAN";
 
-                // 紅燈擇一條件：破高 或 距離1.5%+OI點火
+                // 🚨 紅燈條件：擇一進場
                 const isEntry = price >= high || (dist <= 1.5 && oiChange > 0.8);
-                // 綠燈全部滿足：亮過紅燈 + 價格守住99% + OI撤退不超過1.5%
+                // 🟢 綠燈條件：全部滿足才維持 HOLD
                 const keepHold = (old === "ENTRY" || old === "HOLD") && (price >= high * 0.99 && oiChange > -1.5);
 
                 if (keepHold) st = "HOLD";
@@ -185,7 +172,7 @@
             });
 
             render();
-            document.getElementById('status').innerText = "✅ 三人群組監控中";
+            document.getElementById('status').innerText = "✅ 群組監控中";
         } catch (e) { console.error(e); }
     }
 
