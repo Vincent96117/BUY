@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>嘎空糾察隊 V3.1 - 終極修復版</title>
+    <title>嘎空糾察隊 V3.2 - 三人同步版</title>
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px; border: 1px solid #333; text-align: left; }
-        .SCAN { color: #666; font-weight: normal; }
+        .SCAN { color: #666; }
         .READY { color: #ffeb3b; font-weight: bold; background: rgba(255, 235, 59, 0.1); }
         .ENTRY { color: #fff; background: #ff0000; font-weight: bold; animation: pulse 0.5s infinite; }
         .HOLD { color: #00ff00; font-weight: bold; background: rgba(0, 255, 0, 0.1); }
@@ -22,10 +22,10 @@
 <body>
 
     <div class="dashboard">
-        <div style="font-size: 20px; font-weight: bold; color: #ffeb3b;">嘎空糾察隊 V3.1</div>
+        <div style="font-size: 20px; font-weight: bold; color: #ffeb3b;">三人獵殺團 V3.2</div>
         <button style="background: #d32f2f; color: white;" onclick="toggleSystem()" id="startBtn">🚀 啟動監控</button>
-        <button style="background: #0088cc; color: white; margin-left: 10px;" onclick="testPush()">🧪 測試手機推播</button>
-        <div id="status">系統就緒</div>
+        <button style="background: #0088cc; color: white; margin-left: 10px;" onclick="testPush()">🧪 測試三人同步</button>
+        <div id="status">三人群組已就緒</div>
     </div>
 
     <table>
@@ -45,22 +45,17 @@
     </table>
 
 <script>
-    // --- 🏮 參數檢查 ---
-    // User Key: ujvjr63wvzezvj3d78w2jgcqgon4ub (來源: 截圖)
-    // API Token: acyoe3sz15x4n91r1349fdcau7x6pw (來源: 截圖)
+    // --- 🏮 群組參數已鎖定 ---
     const CONFIG = {
-        PO_USER: "ujvjr63wvzezvj3d78w2jgcqgon4ub", 
-        PO_TOKEN: "acyoe3sz15x4n91r1349fdcau7x6pw",
+        PO_USER: "gpz6z66vptm191u957aoy2v1ay862d", // 這是你的三人群組 Key
+        PO_TOKEN: "acyoe3sz15x4n91r1349fdcau7x6pw", 
         BLACKLIST: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'BNXUSDT']
     };
 
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
 
-    // 優化後的 Pushover 發送引擎，解決 400 Bad Request
     async function sendPush(title, message) {
         if (!title || !message) return;
-        
-        // 使用 FormData 確保格式正確
         const formData = new FormData();
         formData.append("token", CONFIG.PO_TOKEN);
         formData.append("user", CONFIG.PO_USER);
@@ -70,11 +65,7 @@
         formData.append("sound", "classical");
 
         try {
-            await fetch('https://api.pushover.net/1/messages.json', {
-                method: 'POST',
-                body: formData,
-                mode: 'no-cors' // 解決部分瀏覽器 CORS 攔截問題
-            });
+            await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: formData, mode: 'no-cors' });
         } catch (e) { console.error("Push Error", e); }
         
         window.speechSynthesis.cancel();
@@ -83,7 +74,7 @@
         window.speechSynthesis.speak(msg);
     }
 
-    function testPush() { sendPush("測試成功", "嘎空糾察隊連線正常！"); alert("測試指令已發送"); }
+    function testPush() { sendPush("同步測試", "嘎空糾察隊：三位戰友請注意，連線成功！"); alert("測試發送中，請確認三台手機..."); }
 
     function togglePin(symbol) {
         if (pinnedSymbols.has(symbol)) pinnedSymbols.delete(symbol);
@@ -116,7 +107,7 @@
             ]);
             const prices = await pRes.json(), funds = await fRes.json();
 
-            // 資費門檻 0.05%
+            // 資費門檻監控
             const eligible = funds.filter(f => 
                 f.symbol.endsWith('USDT') && 
                 !CONFIG.BLACKLIST.includes(f.symbol) && 
@@ -146,10 +137,8 @@
                 let st = "SCAN";
                 let old = notifiedStatus[symbol] || "SCAN";
 
-                // --- 🚨 紅綠燈邏輯實施 ---
-                // ENTRY: 破高 或 (距離1.5%內且OI點火>0.8%)
+                // 紅綠燈邏輯
                 const isEntry = price >= high || (dist <= 1.5 && oiChange > 0.8);
-                // HOLD 鎖定條件: 亮過紅燈後，價格回撤不超過1%，且OI沒撤退超過1.5%
                 const keepHold = (old === "ENTRY" || old === "HOLD") && (price >= high * 0.99 && oiChange > -1.5);
 
                 if (keepHold) st = "HOLD";
@@ -172,7 +161,7 @@
             });
 
             render();
-            document.getElementById('status').innerText = "✅ 監控中 (10s)";
+            document.getElementById('status').innerText = "✅ 三人群組監控中";
         } catch (e) { console.error(e); }
     }
 
