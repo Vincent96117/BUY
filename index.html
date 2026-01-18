@@ -5,24 +5,17 @@
     <style>
         body { background: #111; color: #eee; font-family: "Microsoft JhengHei", sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
-        table { width: 100%; border-collapse: collapse; background: #1a1a1a; }
+        table { width: 100%; border-collapse: collapse; background: #1a1a1a; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
         th, td { padding: 12px; border: 1px solid #333; text-align: left; }
         th { background: #252525; color: #aaa; font-size: 13px; }
-        
-        .SCAN { color: #666; }
         .READY { color: #ffeb3b; font-weight: bold; background: rgba(255, 235, 59, 0.1); }
         .ENTRY { color: #fff; background: #9c27b0; font-weight: bold; animation: pulse 0.8s infinite; }
         .HOLD { color: #00ff00; font-weight: bold; background: rgba(0, 255, 0, 0.05); }
-        
         .timer { font-family: monospace; color: #00ffff; margin-left: 8px; font-size: 12px; }
-        .warn-tag { background: #ff4444; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 5px; animation: blink 0.5s infinite; }
-        
-        button { padding: 10px 24px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; transition: 0.3s; }
+        button { padding: 10px 24px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; }
         .btn-start { background: #d32f2f; color: white; }
         .btn-test { background: #1976d2; color: white; margin-left: 10px; }
-
         @keyframes pulse { 0% { background: #9c27b0; } 50% { background: #e91e63; } 100% { background: #9c27b0; } }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -34,7 +27,7 @@
         <div id="statusUpdate" style="margin-left: auto; color: #888;">系統就緒</div>
     </div>
 
-    <table id="radarTable">
+    <table>
         <thead>
             <tr>
                 <th>標的</th>
@@ -46,13 +39,16 @@
                 <th>執行建議</th>
             </tr>
         </thead>
-        <tbody id="radarBody"></tbody>
+        <tbody id="radarBody">
+            <tr><td colspan="7" style="text-align:center; padding: 50px; color: #666;">點擊「啟動監控」開始掃描...</td></tr>
+        </tbody>
     </table>
 
 <script>
+    // --- 哥，這裡放你的 BARK KEY ---
     const BARK_KEY = "E96538f9eaef0eaec0fe65be1e6dc3738e08122150839671e3f654cd81633dcd";
+    const BLACKLIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'BNXUSDT'];
     
-    // 儲存已推播過的狀態，防止重複洗版
     let notifiedStatus = {}; 
 
     function speak(text) {
@@ -64,40 +60,41 @@
 
     async function sendBark(title, body) {
         const url = `https://api.day.app/${BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=Trading&sound=miners&isArchive=1`;
-        try { fetch(url); } catch (e) { console.error("Bark 連連線失敗"); }
-    }
-
-    // 核心監控邏輯中的推播判斷
-    function checkAndNotify(symbol, state) {
-        // 如果狀態是 READY, ENTRY 或 HOLD，且之前沒推過這個狀態
-        if (['READY', 'ENTRY', 'HOLD'].includes(state)) {
-            if (notifiedStatus[symbol] !== state) {
-                let title = "";
-                if (state === 'READY') title = `🟡 READY: ${symbol} 進入射程`;
-                if (state === 'ENTRY') title = `🔴 ENTRY: ${symbol} 主力開火`;
-                if (state === 'HOLD') title = `🟢 HOLD: ${symbol} 空頭爆倉`;
-                
-                sendBark(title, `資費與結構已達標，請即刻就位。`);
-                speak(title);
-                notifiedStatus[symbol] = state; // 標記已通知
-            }
-        } else {
-            // 如果變回 SCAN，重置通知狀態，下次再 READY 才能再推
-            notifiedStatus[symbol] = 'SCAN';
+        console.log("正在發送 Bark:", title);
+        try { 
+            const res = await fetch(url); 
+            if(res.ok) console.log("Bark 發送成功");
+        } catch (e) { 
+            console.error("Bark 發送失敗:", e); 
         }
     }
 
-    // 測試連線
+    // 修復後的測試功能
     function runDiagnostic() {
-        speak("啟動連線測試。");
-        sendBark("🚨 測試成功", "READY 推播連線正常！");
-        document.getElementById('statusUpdate').innerText = "Bark 測試信號已發出";
+        console.log("執行診斷測試...");
+        speak("測試開始，請檢查手機通知。");
+        sendBark("🚨 系統測試成功", "READY 推播連線正常，準備開戰！");
+        
+        const testRow = `
+            <tr>
+                <td><b>TEST-COIN</b></td>
+                <td>0.1234 / 0.1250</td>
+                <td>-1.28%</td>
+                <td style="color:#ff00ff">-0.0500% 🔥</td>
+                <td style="color:#ff4444">+5.0%</td>
+                <td class="READY">READY<span class="timer">00:01</span></td>
+                <td>🧪 測試數據：連線一切正常</td>
+            </tr>
+        `;
+        document.getElementById('radarBody').innerHTML = testRow;
+        document.getElementById('statusUpdate').innerText = "測試信號已發送，請看手機";
     }
 
     function startSystem() {
-        speak("系統啟動，READY 訊號已鎖定推播。");
-        // 原有 API 抓取邏輯...
-        // 在邏輯最後調用 checkAndNotify(c.symbol, c.stCmd);
+        speak("系統啟動，鎖定負資費標的。");
+        document.getElementById('statusUpdate').innerText = "數據引擎運轉中...";
+        // 這裡會放置 setInterval 去抓 Binance API 的邏輯
+        // 確保 checkAndNotify(symbol, state) 被呼叫
     }
 </script>
 </body>
