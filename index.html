@@ -1,14 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>V2.6 旗艦全能版 - 鋼鐵指揮官</title>
+    <title>V2.6 終極穩定版 - 鋼鐵指揮官</title>
     <style>
         body { background: #0a0a0a; color: #eee; font-family: "Microsoft JhengHei", sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #333; }
         table { width: 100%; border-collapse: collapse; background: #111; }
         th, td { padding: 12px; border: 1px solid #222; text-align: left; }
         th { background: #1a1a1a; color: #888; font-size: 12px; }
-        .SCAN { color: #555; }
         .READY { color: #ffeb3b; font-weight: bold; background: rgba(255, 235, 59, 0.1); }
         .ENTRY { color: #fff; background: #d32f2f; font-weight: bold; animation: pulse 0.8s infinite; }
         .HOLD { color: #00ff00; font-weight: bold; background: rgba(0, 255, 0, 0.05); }
@@ -25,7 +24,7 @@
     <div class="dashboard">
         <div style="font-size: 18px; font-weight: bold; color: #ff4444;">IRON COMMANDER V2.6</div>
         <button id="startBtn" onclick="toggleSystem()">🚀 啟動引擎</button>
-        <div id="statusUpdate" style="margin-left: auto; color: #00ffff;">系統就緒 | 排除 BTC/ETH/SOL/XRP/BNB/BNX</div>
+        <div id="statusUpdate" style="margin-left: auto; color: #00ffff;">系統就緒 | 已優化 API 加載</div>
     </div>
 
     <table>
@@ -37,7 +36,7 @@
                 <th>資費 (Fund)</th>
                 <th>OI 1m 變動</th>
                 <th>狀態 (上榜時間)</th>
-                <th>建議</th>
+                <th>執行建議</th>
             </tr>
         </thead>
         <tbody id="radarBody"></tbody>
@@ -52,19 +51,25 @@
     let highPriceMap = {}; 
     let notifiedStatus = {}; 
     let startTimeMap = {}; 
-    let pinnedList = new Set(); 
+    let pinnedList = new Set();
     let lastDataCache = [];
 
+    // 解決 400 錯誤：純英文標題 + 編碼
     async function sendBark(title, body) {
         const url = `https://api.day.app/${BARK_KEY}/${encodeURIComponent(title)}/${encodeURIComponent(body)}?group=Trading&isArchive=1`;
-        fetch(url, { mode: 'no-cors' }).catch(e => console.error("Bark Fail"));
+        fetch(url, { mode: 'no-cors' }).catch(() => {});
     }
 
+    // 優化：帶有延遲的 3日高點抓取，防止被鎖
     async function getThreeDayHigh(symbol) {
         try {
+            await new Promise(r => setTimeout(r, 100)); // 每次抓取間隔 100ms
             const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=4h&limit=18`);
             const klines = await res.json();
-            return Math.max(...klines.map(kl => parseFloat(kl[2])));
+            if (Array.isArray(klines)) {
+                return Math.max(...klines.map(kl => parseFloat(kl[2])));
+            }
+            return null;
         } catch (e) { return null; }
     }
 
@@ -89,40 +94,41 @@
             let displayData = [];
 
             for (let f of funds) {
-                // 1. 基本過濾 (結尾不是 USDT 或在黑名單)
                 if (!f.symbol.endsWith('USDT') || BLACKLIST.includes(f.symbol)) continue;
                 
                 const fundRate = parseFloat(f.lastFundingRate);
-                const curPrice = parseFloat(prices.find(p => p.symbol === f.symbol).price);
+                const priceObj = prices.find(p => p.symbol === f.symbol);
+                if (!priceObj) continue;
+                const curPrice = parseFloat(priceObj.price);
                 
-                // 2. 獲取 3 日高點
-                if (!highPriceMap[f.symbol]) highPriceMap[f.symbol] = await getThreeDayHigh(f.symbol);
+                // 異步抓取 3 日高點，如果不成功則暫時用現價
+                if (!highPriceMap[f.symbol]) {
+                    getThreeDayHigh(f.symbol).then(val => { if(val) highPriceMap[f.symbol] = val; });
+                }
                 const highVal = highPriceMap[f.symbol] || curPrice;
 
-                // 3. 計算數據
                 const dist = (((highVal - curPrice) / highVal) * 100).toFixed(2);
                 const ticker = tickers.find(t => t.symbol === f.symbol);
                 const currentOI = ticker ? parseFloat(ticker.volume) : 0;
+                
                 if (!historyOI[f.symbol]) historyOI[f.symbol] = currentOI;
                 const oiChange = (((currentOI - historyOI[f.symbol]) / historyOI[f.symbol]) * 100).toFixed(2);
                 historyOI[f.symbol] = currentOI;
 
-                // 4. 判定狀態 (資費正負 0.05 且 距離達標)
                 let stCmd = "SCAN";
                 const fundOk = Math.abs(fundRate) >= 0.0005;
 
                 if (fundOk) {
-                    if (dist <= 1.5 && dist > 0) stCmd = "READY";
                     if (curPrice >= highVal && oiChange > 1.0) stCmd = "ENTRY";
                     else if (dist <= 1.5 && oiChange > 5.0) stCmd = "ENTRY";
                     else if (curPrice >= highVal) stCmd = "HOLD";
+                    else if (dist <= 1.5 && dist > 0) stCmd = "READY";
                 }
 
-                // 5. 處理推播與計時
                 if (stCmd !== "SCAN") {
                     if (!startTimeMap[f.symbol]) startTimeMap[f.symbol] = Date.now();
                     if (notifiedStatus[f.symbol] !== stCmd) {
-                        sendBark(`${stCmd} ${f.symbol}`, `D:${dist}% F:${(fundRate*100).toFixed(2)}%`);
+                        sendBark(`${stCmd}_${f.symbol}`, `D:${dist}%_F:${(fundRate*100).toFixed(2)}%`);
                         notifiedStatus[f.symbol] = stCmd;
                     }
                 } else {
@@ -134,25 +140,25 @@
             }
             lastDataCache = displayData;
             renderTable(displayData);
-        } catch (e) { console.error("引擎異常"); }
+        } catch (e) { 
+            console.error("引擎異常，嘗試修復中...", e); 
+        }
     }
 
     function renderTable(data) {
         const body = document.getElementById('radarBody');
-        // 排序：釘選 > 狀態(READY/ENTRY/HOLD) > 距離
         const sorted = [...data].sort((a, b) => {
             const aP = pinnedList.has(a.symbol) ? 1 : 0;
             const bP = pinnedList.has(b.symbol) ? 1 : 0;
             if (aP !== bP) return bP - aP;
-            
             const stateOrder = { "ENTRY": 3, "HOLD": 2, "READY": 1, "SCAN": 0 };
             if (stateOrder[a.stCmd] !== stateOrder[b.stCmd]) return stateOrder[b.stCmd] - stateOrder[a.stCmd];
-            
             return a.dist - b.dist;
         });
 
         body.innerHTML = sorted.map(c => {
-            const fundColor = Math.abs(parseFloat(c.fundRate)) >= 0.05 ? (c.fundRate < 0 ? '#ff00ff' : '#00ffff') : '#555';
+            const isExtremeFund = Math.abs(parseFloat(c.fundRate)) >= 0.05;
+            const fundColor = isExtremeFund ? (c.fundRate < 0 ? '#ff00ff' : '#00ffff') : '#555';
             const timeStr = startTimeMap[c.symbol] ? Math.floor((Date.now()-startTimeMap[c.symbol])/1000) : 0;
             const m = Math.floor(timeStr/60).toString().padStart(2,'0');
             const s = (timeStr%60).toString().padStart(2,'0');
@@ -173,7 +179,10 @@
     function toggleSystem() {
         isRunning = !isRunning;
         document.getElementById('startBtn').innerText = isRunning ? "🛑 停止監控" : "🚀 啟動引擎";
-        if (isRunning) setInterval(fetchData, 15000);
+        if (isRunning) {
+            fetchData();
+            setInterval(fetchData, 15000);
+        }
     }
 </script>
 </body>
