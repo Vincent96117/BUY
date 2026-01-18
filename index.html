@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>V178-X 鋼鐵指揮官 V2.5 (時間標記完全體)</title>
+    <title>V178-X 鋼鐵指揮官 V2.6 (引力排序與時間戳版)</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; font-size: 13px; }
@@ -11,10 +11,11 @@
         label { display: block; font-size: 11px; color: #888; margin-bottom: 5px; }
         select, input { background: #333; color: #fff; border: 1px solid #444; padding: 8px; border-radius: 5px; width: 100%; }
         .audio-btn { background: var(--ready); color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .sys-time { color: #888; font-size: 11px; text-align: right; }
         table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
         th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 11px; text-align: left; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 10px; }
         .READY { background: rgba(240, 185, 11, 0.2); color: var(--ready); border: 1px solid var(--ready); }
         .ENTRY { background: var(--entry); color: #fff; box-shadow: 0 0 10px var(--entry); animation: pulse 0.5s infinite alternate; }
         .HOLD { background: var(--hold); color: #fff; }
@@ -33,9 +34,10 @@
         <div><label>追蹤天數</label><select id="lookbackDays"><option value="3" selected>3 天前高</option><option value="7">7 天前高</option></select></div>
         <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
         <div><button id="enableAudio" class="audio-btn">📢 啟動戰備監控</button></div>
+        <div class="sys-time">系統最後掃描: <span id="lastUpdateTime">--:--:--</span></div>
     </div>
     <table>
-        <thead><tr><th>幣種</th><th>價格 (前高)</th><th>狀態 (原因/持續時間)</th><th>資費 (🔥趨勢)</th><th>持倉 OI (1m變動)</th><th>引力</th></tr></thead>
+        <thead><tr><th>幣種</th><th>價格 (前高)</th><th>狀態 (原因 / 持續時間)</th><th>資費 (🔥趨勢)</th><th>持倉 OI (1m變動)</th><th>引力 (越小越近)</th></tr></thead>
         <tbody id="list"></tbody>
     </table>
 </div>
@@ -44,7 +46,7 @@
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT"];
     let audioEnabled = false;
     let historyData = {}; 
-    let statusTimestamps = {}; // 紀錄亮燈時間
+    let statusTimestamps = {}; 
     const entryAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
 
     document.getElementById('enableAudio').addEventListener('click', function() {
@@ -62,6 +64,8 @@
             const active = tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol) && parseFloat(x.quoteVolume) > 5000000)
                                  .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50);
 
+            document.getElementById('lastUpdateTime').innerText = new Date().toLocaleTimeString();
+
             let playE = false;
             const promises = active.map(async (t) => {
                 const [fundR, kR, oiR] = await Promise.all([
@@ -70,7 +74,7 @@
                     fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${t.symbol}`).then(res => res.json())
                 ]);
 
-                if (!oiR.openInterest || parseFloat(oiR.openInterest) === 0) return null; // 排除 OI 為 0 的
+                if (!oiR.openInterest || parseFloat(oiR.openInterest) === 0) return null;
 
                 const curPrice = parseFloat(t.lastPrice);
                 const fund = parseFloat(fundR.lastFundingRate) * 100;
@@ -94,10 +98,9 @@
                     else if (fundExpanding || Math.abs(oiChange) < 1) { stCmd = "HOLD"; reason = "能量續航中"; }
                 } else if (dist < 1.5 && dist > -0.5 && fundOk) {
                     if (oiChange > 5.0) { stCmd = "ENTRY"; reason = "主力伏擊 (OI暴增)"; playE = true; } 
-                    else { stCmd = "READY"; reason = "進入射程"; }
+                    else { stCmd = "READY"; reason = "進入射射程"; }
                 }
 
-                // 時間紀錄邏輯
                 if (stCmd !== "SCAN") {
                     if (!statusTimestamps[t.symbol]) statusTimestamps[t.symbol] = Date.now();
                 } else {
@@ -117,7 +120,14 @@
             if (audioEnabled && playE) entryAudio.play();
 
             const sortOrder = { 'READY': 0, 'ENTRY': 1, 'HOLD': 2, 'SCAN': 3 };
-            document.getElementById('list').innerHTML = res.sort((a,b) => sortOrder[a.stCmd] - sortOrder[b.stCmd]).slice(0, 25).map(c => `
+            res.sort((a, b) => {
+                if (sortOrder[a.stCmd] !== sortOrder[b.stCmd]) {
+                    return sortOrder[a.stCmd] - sortOrder[b.stCmd];
+                }
+                return a.dist - b.dist; // 引力排序：越小越靠前
+            });
+
+            document.getElementById('list').innerHTML = res.slice(0, 25).map(c => `
                 <tr>
                     <td><b>${c.symbol.replace('USDT','')}</b></td>
                     <td><div style="font-size:10px;color:#666">${c.highVal}</div>${c.curPrice}</td>
