@@ -173,7 +173,7 @@
     function toggleSystem() {
         isRunning = !isRunning;
         document.getElementById('startBtn').innerText = isRunning ? "🛑 停止監控" : "🚀 啟動引擎";
-        if (isRunning) setInterval(fetchData, 3000);
+        if (isRunning) setInterval(fetchData, 15000);
     }
 </script>
 </body>
