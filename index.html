@@ -17,7 +17,7 @@
         .btn-pin { padding: 5px 10px; background: #444; color: white; }
         .btn-pin.active { background: #ffeb3b; color: black; }
         #status { margin-left: auto; color: #00ffff; font-weight: bold; }
-        .tp-box { color: #00ff00; font-size: 11px; display: block; margin-top: 4px; font-weight: bold; }
+        .tp-box { color: #00ff00; font-size: 11px; display: block; margin-top: 4px; font-weight: bold; border-top: 1px dashed #444; padding-top: 2px; }
     </style>
 </head>
 <body>
@@ -39,7 +39,7 @@
                 <th>距離 %</th>
                 <th>資費</th>
                 <th>狀態</th>
-                <th>OI 變動 / TP</th>
+                <th>OI 變動 (5m TP)</th>
             </tr>
         </thead>
         <tbody id="radarBody"></tbody>
@@ -53,40 +53,24 @@
     };
 
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
-    let entryPriceRecord = {}; // 紀錄進場價算 TP
+    let entryDataStore = {}; // 專門存 ENTRY 瞬間的基準數據
     const sleep = ms => new Promise(res => setTimeout(res, ms));
 
     async function sendPush(title, message) {
         if (!title || !message) return;
-        const params = new URLSearchParams();
-        params.append("token", CONFIG.PO_TOKEN);
-        params.append("user", CONFIG.PO_USER);
-        params.append("title", title);
-        params.append("message", message);
-        params.append("priority", "1");
-        params.append("sound", "classical");
-
         try {
-            await fetch('https://api.pushover.net/1/messages.json', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: params.toString()
+            const params = new URLSearchParams({
+                token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, title: title, message: message, priority: "1", sound: "classical"
             });
+            await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: params });
         } catch (e) { console.error("Push Error", e); }
         
         window.speechSynthesis.cancel();
-        const msg = new SpeechSynthesisUtterance(title);
-        msg.lang = 'zh-TW';
-        window.speechSynthesis.speak(msg);
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(title));
     }
 
-    function testPush() { sendPush("群組測試成功", "嘎空糾察隊連線正常！"); alert("測試發送中..."); }
-
-    function togglePin(symbol) {
-        if (pinnedSymbols.has(symbol)) pinnedSymbols.delete(symbol);
-        else pinnedSymbols.add(symbol);
-        render();
-    }
+    function testPush() { sendPush("群組測試", "連線正常！"); alert("測試發送中..."); }
+    function togglePin(symbol) { pinnedSymbols.has(symbol) ? pinnedSymbols.delete(symbol) : pinnedSymbols.add(symbol); render(); }
 
     async function getSingleOI(symbol) {
         try {
@@ -114,16 +98,13 @@
             const prices = await pRes.json(), funds = await fRes.json();
 
             const eligible = funds.filter(f => 
-                f.symbol.endsWith('USDT') && 
-                !CONFIG.BLACKLIST.includes(f.symbol) && 
-                Math.abs(parseFloat(f.lastFundingRate)) >= 0.0005
+                f.symbol.endsWith('USDT') && !CONFIG.BLACKLIST.includes(f.symbol) && Math.abs(parseFloat(f.lastFundingRate)) >= 0.0005
             ).map(f => f.symbol);
 
             const symbolsToProcess = new Set([...eligible, ...pinnedSymbols]);
 
             for (let symbol of symbolsToProcess) {
-                // 增加小延遲防止 400 報錯
-                await sleep(100);
+                await sleep(100); // 防 400 報錯
 
                 if (!allData[symbol]) {
                     const high = await get3DHigh(symbol);
@@ -152,23 +133,28 @@
                 else if (eligible.includes(symbol) && isEntry) st = "ENTRY";
                 else if (eligible.includes(symbol) && dist <= 1.5) st = "READY";
 
-                // --- 動態 TP 計算邏輯 ---
+                // --- 僅 ENTRY 抓取並計算動態 TP ---
                 let tpDisplay = "";
                 if (st === "ENTRY") {
-                    if (!entryPriceRecord[symbol]) entryPriceRecord[symbol] = price;
-                    // TP 公式: (絕對值資費/0.01 * 0.5) + (OI變動/5 * 1) = 預期漲幅
-                    let boost = (Math.abs(fund) / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1);
-                    let tpPrice = entryPriceRecord[symbol] * (1 + (boost / 100));
-                    tpDisplay = `<span class="tp-box">🎯TP: ${tpPrice.toFixed(4)}</span>`;
-                } else if (st === "SCAN") {
-                    delete entryPriceRecord[symbol];
+                    // 如果剛進入 ENTRY，記錄基準點 (進場價與基準資費)
+                    if (!entryDataStore[symbol]) {
+                        entryDataStore[symbol] = { p: price, f: parseFloat(fund) };
+                    }
+                    
+                    // 能量加成公式 (5分鐘滾動權重)
+                    let fundShift = Math.abs(parseFloat(fund) - entryDataStore[symbol].f);
+                    let boost = (fundShift / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1.0);
+                    
+                    let tpPrice = entryDataStore[symbol].p * (1 + (boost / 100));
+                    tpDisplay = `<span class="tp-box">🎯 目標: ${tpPrice.toFixed(4)}</span>`;
+                } else if (st !== "HOLD") {
+                    // 離開 ENTRY 或 HOLD 狀態時清除基準數據
+                    delete entryDataStore[symbol];
                 }
 
                 if (st !== "SCAN" && !signalTimes[symbol]) signalTimes[symbol] = new Date().toLocaleTimeString();
+                if (st !== old && st !== "SCAN") sendPush(`${st}: ${symbol}`, `價:${price} OI:${oiChange}%`);
                 
-                if (st !== old && st !== "SCAN") {
-                    sendPush(`${st}: ${symbol}`, `價:${price} 距:${dist}% OI:${oiChange}%`);
-                }
                 notifiedStatus[symbol] = st;
                 allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange, tpDisplay };
             }
@@ -186,11 +172,7 @@
 
     function render() {
         const rows = Object.values(allData).filter(d => d.row).map(d => d.row);
-        const sorted = rows.sort((a, b) => {
-            if (pinnedSymbols.has(a.symbol)) return -1;
-            if (pinnedSymbols.has(b.symbol)) return 1;
-            return a.dist - b.dist;
-        });
+        const sorted = rows.sort((a, b) => pinnedSymbols.has(a.symbol) ? -1 : pinnedSymbols.has(b.symbol) ? 1 : a.dist - b.dist);
         document.getElementById('radarBody').innerHTML = sorted.map(c => `
             <tr class="${pinnedSymbols.has(c.symbol) ? 'pinned' : ''}">
                 <td><button class="btn-pin ${pinnedSymbols.has(c.symbol) ? 'active' : ''}" onclick="togglePin('${c.symbol}')">📌</button></td>
