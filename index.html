@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>三人獵殺團 V3.1-Turbo</title>
+    <title>三人獵殺團 V3.1-Turbo-Fix</title>
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
@@ -18,7 +18,7 @@
         .btn-pin.active { background: #ffeb3b; color: black; }
         #status { margin-left: auto; color: #00ffff; font-weight: bold; }
         .tp-text { display: block; color: #00ff00; font-size: 11px; margin-top: 3px; font-weight: bold; }
-        .turbo-badge { font-size: 10px; background: #ff0000; color: white; padding: 2px 4px; border-radius: 3px; margin-left: 5px; vertical-align: middle; }
+        .turbo-badge { font-size: 9px; background: #ff0000; color: white; padding: 1px 3px; border-radius: 3px; margin-left: 3px; }
     </style>
 </head>
 <body>
@@ -56,17 +56,33 @@
     let isRunning = false;
     let notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
     let entryPoints = {}, lastPushedTP = {};
-    let turboIntervals = {}; // 存放 5 秒掃描的計時器
+    let turboIntervals = {}; 
 
+    // --- 🏮 恢復最穩定的推播發送模式 ---
     async function sendPush(title, message) {
         if (!title || !message) return;
+        
+        // 語音照常
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(new SpeechSynthesisUtterance(title));
-        const params = new URLSearchParams({ token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, title: title, message: message, priority: "1", sound: "classical" });
-        fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: params.toString() });
+
+        const params = new URLSearchParams({ 
+            token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, 
+            title: title, message: message, 
+            priority: "1", sound: "classical" 
+        });
+
+        try {
+            // 改回原本最保險的發送方式
+            await fetch('https://api.pushover.net/1/messages.json', { 
+                method: 'POST', 
+                body: params.toString(),
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+        } catch (e) { console.error("Push Error:", e); }
     }
 
-    function testPush() { sendPush("測試通知", "連線穩定！"); alert("已發送測試。"); }
+    function testPush() { sendPush("測試通知", "推播修復完成！"); alert("已發送測試。"); }
     function togglePin(symbol) { pinnedSymbols.has(symbol) ? pinnedSymbols.delete(symbol) : pinnedSymbols.add(symbol); render(); }
 
     async function getSingleOI(symbol) {
@@ -85,7 +101,7 @@
         } catch (e) { return null; }
     }
 
-    // --- 🏮 5秒專屬 Turbo 掃描 ---
+    // --- 🏮 5秒 Turbo 監控：更新數據與動態 TP ---
     async function runTurboScan(symbol) {
         if (!isRunning || (notifiedStatus[symbol] !== "ENTRY" && notifiedStatus[symbol] !== "HOLD")) {
             clearInterval(turboIntervals[symbol]);
@@ -94,29 +110,28 @@
         }
 
         try {
-            const [pRes, fRes, oi] = await Promise.all([
+            const [pRes, fRes] = await Promise.all([
                 fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${symbol}`),
-                fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`),
-                getSingleOI(symbol)
+                fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`)
             ]);
             const pData = await pRes.json(), fData = await fRes.json();
             const price = parseFloat(pData.price), fund = (parseFloat(fData.lastFundingRate) * 100).toFixed(4);
+            const oi = await getSingleOI(symbol);
             const oiChange = lastOI[symbol] ? ((oi - lastOI[symbol]) / lastOI[symbol] * 100).toFixed(2) : 0;
             
-            // 更新數據
             if (allData[symbol]) {
                 allData[symbol].row.price = price;
                 allData[symbol].row.fund = fund;
                 allData[symbol].row.oiChange = oiChange;
                 
-                // 動態計算 TP
+                // 動態 TP 計算 (以進場時 5 分鐘能量為基準的滾動計算)
                 if (entryPoints[symbol]) {
                     let fShift = Math.abs(parseFloat(fund) - entryPoints[symbol].f);
                     let boost = (fShift / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1.0);
                     let tpPrice = entryPoints[symbol].p * (1 + (boost / 100));
-                    allData[symbol].row.tpTag = `<span class="tp-text">🎯TP: ${tpPrice.toFixed(4)} <span class="turbo-badge">5s</span></span>`;
+                    allData[symbol].row.tpTag = `<span class="tp-text">🎯TP: ${tpPrice.toFixed(4)}<span class="turbo-badge">5s</span></span>`;
                     
-                    // TP 上修推播
+                    // TP 上修推播 (漲超過 0.5% 才推)
                     if (tpPrice > (lastPushedTP[symbol] || 0) * 1.005) {
                         sendPush(`🎯 TP上修: ${symbol}`, `價:${price} 標:${tpPrice.toFixed(4)}`);
                         lastPushedTP[symbol] = tpPrice;
@@ -124,7 +139,7 @@
                 }
                 render();
             }
-        } catch (e) { console.error("Turbo Error", e); }
+        } catch (e) {}
     }
 
     async function mainLoop() {
@@ -143,7 +158,7 @@
             const symbolsToProcess = new Set([...eligible, ...pinnedSymbols]);
 
             for (let symbol of symbolsToProcess) {
-                await new Promise(r => setTimeout(r, 40));
+                await new Promise(r => setTimeout(r, 60)); // 穩定掃描節奏
 
                 if (!allData[symbol]) {
                     const high = await get3DHigh(symbol);
@@ -173,7 +188,7 @@
                 else if (eligible.includes(symbol) && isEntry) st = "ENTRY";
                 else if (eligible.includes(symbol) && dist <= 1.5) st = "READY";
 
-                // --- 🎯 TP 邏輯 ---
+                // --- 🎯 TP 與 Turbo 邏輯 ---
                 let tpTag = "";
                 if (st === "ENTRY" || st === "HOLD") {
                     if (!entryPoints[symbol]) entryPoints[symbol] = { p: price, f: parseFloat(fund) };
@@ -183,27 +198,28 @@
                     let tpPrice = entryPoints[symbol].p * (1 + (boost / 100));
                     tpTag = `<span class="tp-text">🎯TP: ${tpPrice.toFixed(4)}</span>`;
 
-                    // 啟動專屬 5 秒監控
+                    // 啟動 5 秒高頻更新
                     if (!turboIntervals[symbol]) {
                         turboIntervals[symbol] = setInterval(() => runTurboScan(symbol), 5000);
                     }
                 } else {
                     delete entryPoints[symbol]; delete lastPushedTP[symbol];
-                    if (turboIntervals[symbol]) {
-                        clearInterval(turboIntervals[symbol]);
-                        delete turboIntervals[symbol];
-                    }
+                    if (turboIntervals[symbol]) { clearInterval(turboIntervals[symbol]); delete turboIntervals[symbol]; }
                 }
 
                 if (st !== "SCAN" && !signalTimes[symbol]) signalTimes[symbol] = new Date().toLocaleTimeString();
-                if (st !== old && st !== "SCAN") sendPush(`${st}: ${symbol}`, `價:${price} OI:${oiChange}%`);
+                
+                // 狀態改變推播
+                if (st !== old && st !== "SCAN") {
+                    await sendPush(`${st}: ${symbol}`, `價:${price} OI:${oiChange}%`);
+                }
                 
                 notifiedStatus[symbol] = st;
                 allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange, tpTag };
             }
 
             render();
-            document.getElementById('status').innerText = "✅ 大循環監控中 (15s)";
+            document.getElementById('status').innerText = `✅ 休息中 (${new Date().toLocaleTimeString()})`;
         } catch (e) { console.error(e); }
     }
 
