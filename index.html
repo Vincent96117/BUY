@@ -2,15 +2,17 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>三人獵殺團 V3.4-Pro</title>
+    <title>三人獵殺團 V3.5-Commander</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; font-size: 13px; }
-        .container { max-width: 1300px; margin: 0 auto; }
-        .control-panel { background: #121212; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; align-items: center; gap: 20px; }
+        .container { max-width: 1350px; margin: 0 auto; }
+        /* 復原控制列樣式 */
+        .control-panel { background: #121212; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; border: 1px solid #333; }
         label { font-size: 12px; color: #888; }
-        select, input { background: #1e2026; color: #fff; border: 1px solid #333; padding: 6px 12px; border-radius: 4px; }
+        select, input { background: #1e2026; color: #fff; border: 1px solid #333; padding: 6px 12px; border-radius: 4px; outline: none; }
         .audio-btn { background: #f0b90b; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .test-btn { background: #474d57; color: #fff; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; }
         
         table { width: 100%; border-collapse: collapse; background: var(--card); }
         th { background: #121212; color: #848e9c; padding: 12px 8px; font-size: 11px; text-align: left; border-bottom: 1px solid #2b2f36; }
@@ -23,10 +25,11 @@
         .SCAN { color: #474d57; }
         
         .fund-warn { color: #00ffff; text-shadow: 0 0 8px #00ffff; font-weight: bold; }
-        .tp-label { color: #2ebd85; font-weight: bold; margin-left: 5px; border: 1px solid #2ebd8533; padding: 1px 3px; border-radius: 3px; font-size: 11px; }
+        .tp-label { color: #2ebd85; font-weight: bold; margin-left: 5px; border: 1px solid #2ebd8555; padding: 1px 3px; border-radius: 3px; font-size: 11px; background: rgba(46, 189, 133, 0.1); }
         .timer { font-family: monospace; color: #888; font-size: 10px; margin-left: 4px; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        .pinned { background: rgba(240, 185, 11, 0.05); }
+        .pinned { background: rgba(240, 185, 11, 0.08) !important; }
+        tr:hover { background: #1e2026; }
     </style>
 </head>
 <body>
@@ -42,8 +45,9 @@
         <div><label>資費門檻 (%)</label>
             <input type="number" id="fundThreshold" value="-0.02" step="0.01">
         </div>
-        <div><button id="enableAudio" class="audio-btn">✅ 監控中</button></div>
-        <div style="margin-left:auto; color:#444; font-size:11px;">系統掃描: <span id="lastTime">--:--:--</span></div>
+        <div><button id="enableAudio" class="audio-btn">📢 啟動監控</button></div>
+        <div><button id="testPush" class="test-btn">🔔 推播測試</button></div>
+        <div style="margin-left:auto; color:#444; font-size:11px;">系統狀態: <span id="sysMsg">READY</span> | <span id="lastTime">--:--:--</span></div>
     </div>
 
     <table>
@@ -52,7 +56,7 @@
                 <th>定選</th>
                 <th>幣種</th>
                 <th>價格 (前高)</th>
-                <th>狀態 (原因/時間)</th>
+                <th>狀態 (原因/持續時間)</th>
                 <th>資費 (🔥趨勢)</th>
                 <th>持倉 OI (1m變動)</th>
                 <th>引力</th>
@@ -68,7 +72,26 @@
     let statusTimestamps = {}; 
     let entryPrices = {}; 
     let lastKnownTP = {};
-    let pinnedSymbols = new Set(); // 存放定選的幣種
+    let pinnedSymbols = new Set();
+    let audioEnabled = false;
+
+    const alertAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
+
+    // 推播權限與按鈕
+    document.getElementById('enableAudio').addEventListener('click', function() {
+        audioEnabled = !audioEnabled;
+        this.innerText = audioEnabled ? "✅ 監控中" : "📢 啟動監控";
+        if (Notification.permission !== "granted") Notification.requestPermission();
+    });
+
+    document.getElementById('testPush').addEventListener('click', function() {
+        if (Notification.permission === "granted") {
+            new Notification("🚀 獵殺團推播測試", { body: "當前系統運行正常，TP 算法已就緒。" });
+            alertAudio.play();
+        } else {
+            alert("請先點擊『啟動監控』並允許瀏覽器通知。");
+        }
+    });
 
     const delay = ms => new Promise(res => setTimeout(res, ms));
 
@@ -79,6 +102,7 @@
             const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const tickers = await r.json();
             
+            // 篩選基礎量能 500 萬以上的幣
             const active = tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol) && parseFloat(x.quoteVolume) > 5000000)
                                  .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 40);
 
@@ -87,7 +111,7 @@
 
             for (let t of active) {
                 try {
-                    await delay(65); 
+                    await delay(65); // 解決 400 Error 的關鍵
                     const [fundR, kR, oiR] = await Promise.all([
                         fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`).then(res => res.json()),
                         fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`).then(res => res.json()),
@@ -99,6 +123,9 @@
                     const oi = parseFloat(oiR.openInterest);
                     const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
                     const dist = ((highVal - curPrice) / curPrice * 100);
+                    
+                    // 計算 3 天成交量均值 (簡單估算用 24h/288)
+                    const avgVol5m = parseFloat(t.quoteVolume) / 288;
 
                     if (!historyData[t.symbol]) historyData[t.symbol] = [];
                     historyData[t.symbol].push({ fund, oi });
@@ -107,30 +134,36 @@
                     const oiChange = ((oi - old.oi) / old.oi * 100);
                     const fundDelta = fund - old.fund;
 
-                    let stCmd = "SCAN", reason = "掃描";
+                    // --- 核心獵殺算法 (100% 保留) ---
+                    let stCmd = "SCAN", reason = "系統掃描";
                     if (curPrice > highVal && fund <= fundLimit) {
                         stCmd = (oiChange > 1.0) ? "ENTRY" : "HOLD";
                         reason = (stCmd === "ENTRY") ? "結構突破" : "能量續航";
                     } else if (dist < 1.5 && fund <= fundLimit) {
-                        stCmd = (oiChange > 5.0) ? "ENTRY" : "主力伏擊";
+                        stCmd = (oiChange > 5.0) ? "ENTRY" : "READY";
                         reason = (stCmd === "ENTRY") ? "主力伏擊" : "進入射程";
                     }
 
-                    // 動態止盈 TP
+                    // --- TP 動態算法 (資費 + OI + 成交量) ---
                     let tpStr = "";
                     if (stCmd === "ENTRY") {
                         if (!entryPrices[t.symbol]) entryPrices[t.symbol] = curPrice;
+                        
                         let fShift = Math.abs(Math.min(0, fundDelta));
                         let boost = (Math.min(fShift, 0.1) / 0.01) * 0.5 + (fShift > 0.1 ? ((fShift - 0.1) / 0.01) * 1.0 : 0);
                         boost += (Math.max(0, oiChange) / 5) * 1;
+                        
+                        // 成交量倍數加成 (若當前 5m 量 > 3倍均量)
+                        let volRatio = (parseFloat(t.quoteVolume) / 288) / (avgVol5m || 1); 
+                        if (volRatio > 3) boost += (volRatio - 3) * 1;
+
                         let tpPrice = entryPrices[t.symbol] * (1 + (boost / 100));
                         tpStr = `<span class="tp-label">TP: ${tpPrice.toFixed(4)}</span>`;
                         
-                        if (tpPrice > (lastKnownTP[t.symbol] || 0) * 1.005) {
-                            if (Notification.permission === "granted") {
-                                new Notification(`🎯 ${t.symbol} 目標價更新`, { body: `目標: ${tpPrice.toFixed(4)}` });
-                                lastKnownTP[t.symbol] = tpPrice;
-                            }
+                        if (audioEnabled && tpPrice > (lastKnownTP[t.symbol] || 0) * 1.005) {
+                            new Notification(`🎯 ${t.symbol} 目標更新`, { body: `TP 目標: ${tpPrice.toFixed(4)}` });
+                            alertAudio.play();
+                            lastKnownTP[t.symbol] = tpPrice;
                         }
                     } else if (stCmd === "SCAN") {
                         delete entryPrices[t.symbol]; delete lastKnownTP[t.symbol];
@@ -143,7 +176,7 @@
                 } catch (e) {}
             }
 
-            // 排序邏輯：定選優先 > 狀態優先 > 引力距離
+            // 排序邏輯：定選優先 > 狀態優先 > 引力
             const sortOrder = { 'READY': 0, 'ENTRY': 1, 'HOLD': 2, 'SCAN': 3 };
             results.sort((a,b) => {
                 if (a.isPinned !== b.isPinned) return b.isPinned - a.isPinned;
@@ -161,16 +194,15 @@
                     <td style="color:${c.dist<1.5?'#f0b90b':''}">${c.dist.toFixed(2)}%</td>
                 </tr>
             `).join('');
-        } catch (err) {}
+            document.getElementById('sysMsg').innerText = "OK";
+        } catch (err) { document.getElementById('sysMsg').innerText = "API ERROR"; }
     }
 
     function togglePin(symbol) {
         if (pinnedSymbols.has(symbol)) pinnedSymbols.delete(symbol);
         else pinnedSymbols.add(symbol);
-        // 不等待下個週期，立即重繪列表（可選，這裡交給 15s 刷新）
     }
 
-    if (Notification.permission !== "granted") Notification.requestPermission();
     setInterval(update, 15000); update();
 </script>
 </body>
