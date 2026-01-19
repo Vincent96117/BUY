@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>嘎空糾察隊 V3.1 - 群組同步版</title>
+    <title>三人獵殺團 V3.1-Final</title>
     <style>
         body { background: #111; color: #eee; font-family: sans-serif; margin: 20px; }
         .dashboard { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; background: #222; padding: 15px; border-radius: 8px; border: 1px solid #444; }
@@ -17,7 +17,6 @@
         .btn-pin { padding: 5px 10px; background: #444; color: white; }
         .btn-pin.active { background: #ffeb3b; color: black; }
         #status { margin-left: auto; color: #00ffff; font-weight: bold; }
-        /* TP 顯示位置：OI 變動下方的小字 */
         .tp-text { display: block; color: #00ff00; font-size: 11px; margin-top: 3px; font-weight: bold; }
     </style>
 </head>
@@ -54,21 +53,33 @@
     };
 
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
-    let entryPoints = {}; // 紀錄進場價與資費基準
+    let entryPoints = {}, lastPushedTP = {};
 
+    // --- 🏮 修正版推播函數 (異步不阻塞) ---
     async function sendPush(title, message) {
         if (!title || !message) return;
-        const params = new URLSearchParams({
-            token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, title: title, message: message, priority: "1", sound: "classical"
-        });
-        try {
-            await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: params.toString() });
-        } catch (e) { console.error("Push Error", e); }
+        
+        // 語音優先響起，給予即時體感
         window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(new SpeechSynthesisUtterance(title));
+        const msg = new SpeechSynthesisUtterance(title);
+        msg.lang = 'zh-TW';
+        window.speechSynthesis.speak(msg);
+
+        // 使用 fetch 的背景發送，不使用 await 等待回傳，避免卡住主程式
+        const params = new URLSearchParams({ 
+            token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, 
+            title: title, message: message, 
+            priority: "1", sound: "classical" 
+        });
+
+        fetch('https://api.pushover.net/1/messages.json', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        }).catch(e => console.error("Push Failed", e));
     }
 
-    function testPush() { sendPush("群組測試成功", "嘎空糾察隊連線正常！"); alert("測試發送中..."); }
+    function testPush() { sendPush("測試通知", "推播系統正常，連線穩定。"); alert("已發出測試請求，請查看手機。"); }
     function togglePin(symbol) { pinnedSymbols.has(symbol) ? pinnedSymbols.delete(symbol) : pinnedSymbols.add(symbol); render(); }
 
     async function getSingleOI(symbol) {
@@ -103,8 +114,8 @@
             const symbolsToProcess = new Set([...eligible, ...pinnedSymbols]);
 
             for (let symbol of symbolsToProcess) {
-                // 微小緩衝防止 400
-                await new Promise(r => setTimeout(r, 20));
+                // 減少延遲到 50ms，加速掃描
+                await new Promise(r => setTimeout(r, 50));
 
                 if (!allData[symbol]) {
                     const high = await get3DHigh(symbol);
@@ -126,7 +137,6 @@
                 let st = "SCAN";
                 let old = notifiedStatus[symbol] || "SCAN";
 
-                // --- 🚨 原始邏輯：一個字沒動 ---
                 const isEntry = price >= high || (dist <= 1.5 && oiChange > 0.8);
                 const keepHold = (old === "ENTRY" || old === "HOLD") && (price >= high * 0.99 && oiChange > -1.5);
 
@@ -134,28 +144,37 @@
                 else if (eligible.includes(symbol) && isEntry) st = "ENTRY";
                 else if (eligible.includes(symbol) && dist <= 1.5) st = "READY";
 
-                // --- 🎯 僅 ENTRY 計算 TP ---
+                // --- 🎯 TP 與推播邏輯 ---
                 let tpTag = "";
                 if (st === "ENTRY") {
                     if (!entryPoints[symbol]) entryPoints[symbol] = { p: price, f: parseFloat(fund) };
-                    // TP 算法：(資費偏移/0.01 * 0.5) + (OI變動/5 * 1.0)
                     let fShift = Math.abs(parseFloat(fund) - entryPoints[symbol].f);
                     let boost = (fShift / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1.0);
                     let tpPrice = entryPoints[symbol].p * (1 + (boost / 100));
                     tpTag = `<span class="tp-text">🎯TP: ${tpPrice.toFixed(4)}</span>`;
+
+                    // TP 有感上修推播
+                    if (tpPrice > (lastPushedTP[symbol] || 0) * 1.005) {
+                        sendPush(`🎯 TP上修: ${symbol}`, `價:${price} 標:${tpPrice.toFixed(4)}`);
+                        lastPushedTP[symbol] = tpPrice;
+                    }
                 } else if (st !== "HOLD") {
-                    delete entryPoints[symbol];
+                    delete entryPoints[symbol]; delete lastPushedTP[symbol];
                 }
 
                 if (st !== "SCAN" && !signalTimes[symbol]) signalTimes[symbol] = new Date().toLocaleTimeString();
-                if (st !== old && st !== "SCAN") sendPush(`${st}: ${symbol}`, `價:${price} OI:${oiChange}%`);
+                
+                // 狀態改變立即推播（包含 READY）
+                if (st !== old && st !== "SCAN") {
+                    sendPush(`${st}: ${symbol}`, `價:${price} 距:${dist}% OI:${oiChange}%`);
+                }
                 
                 notifiedStatus[symbol] = st;
                 allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange, tpTag };
             }
 
             render();
-            document.getElementById('status').innerText = "✅ 監控中 (12s)";
+            document.getElementById('status').innerText = "✅ 監控中 (15s)";
         } catch (e) { console.error(e); }
     }
 
