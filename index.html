@@ -2,146 +2,166 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>三人獵殺團 V3.2-Ultimate (動態止盈與推播版)</title>
+    <title>三人獵殺團 V3.2-Fix</title>
     <style>
         :root { --bg: #0b0e11; --card: #181a20; --ready: #f0b90b; --entry: #f6465d; --hold: #2ebd85; --scan: #474d57; --text: #eaecef; }
         body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 10px; font-size: 13px; }
         .container { max-width: 1300px; margin: 0 auto; }
-        .control-panel { background: var(--card); padding: 15px; border-radius: 10px; border: 1px solid #333; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; align-items: end; }
-        .audio-btn { background: var(--ready); color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; }
-        th { background: #1e2329; color: #848e9c; padding: 12px 8px; font-size: 11px; text-align: left; }
+        /* 恢復圖片中的控制列樣式 */
+        .control-panel { background: #121212; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; align-items: center; gap: 20px; }
+        label { font-size: 12px; color: #888; margin-right: 8px; }
+        select, input { background: #1e2026; color: #fff; border: 1px solid #333; padding: 6px 12px; border-radius: 4px; }
+        .audio-btn { background: #f0b90b; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        
+        table { width: 100%; border-collapse: collapse; background: var(--card); }
+        th { background: #121212; color: #848e9c; padding: 12px 8px; font-size: 11px; text-align: left; border-bottom: 1px solid #2b2f36; }
         td { padding: 12px 8px; border-bottom: 1px solid #2b2f36; }
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 10px; }
-        .READY { background: rgba(240, 185, 11, 0.2); color: var(--ready); border: 1px solid var(--ready); }
-        .ENTRY { background: var(--entry); color: #fff; box-shadow: 0 0 10px var(--entry); animation: pulse 0.5s infinite alternate; }
-        .HOLD { background: var(--hold); color: #fff; }
-        .SCAN { color: var(--scan); }
+        
+        .status-badge { font-weight: bold; font-size: 11px; }
+        .ENTRY { color: #f6465d; animation: pulse 1s infinite; }
+        .READY { color: #f0b90b; }
+        .HOLD { color: #2ebd85; }
+        .SCAN { color: #474d57; }
+        
+        /* 資費霓虹特效 */
         .fund-warn { color: #00ffff; text-shadow: 0 0 8px #00ffff; font-weight: bold; }
-        .tp-label { color: #2ebd85; font-weight: bold; margin-left: 6px; font-family: monospace; }
-        .timer { font-family: monospace; color: #f0b90b; font-size: 11px; margin-left: 5px; }
-        @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
-        .oi-up { color: #2ebd85; font-weight: bold; }
-        .oi-down { color: #f6465d; }
+        .tp-label { color: #2ebd85; font-weight: bold; margin-left: 5px; }
+        .timer { font-family: monospace; color: #888; font-size: 10px; margin-left: 4px; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
 
 <div class="container">
     <div class="control-panel">
-        <div><label>追蹤天數</label><select id="lookbackDays"><option value="3" selected>3天</option><option value="7">7天</option></select></div>
-        <div><label>資費門檻 (%)</label><input type="number" id="fundThreshold" value="-0.02" step="0.01"></div>
-        <div><button id="enableAudio" class="audio-btn">📢 啟動監控與推播</button></div>
-        <div style="color:#888; font-size:11px; text-align:right">上次掃描: <span id="lastUpdateTime">--:--:--</span></div>
+        <div><label>追蹤天數</label>
+            <select id="lookbackDays">
+                <option value="3" selected>3 天前高</option>
+                <option value="7">7 天前高</option>
+            </select>
+        </div>
+        <div><label>資費門檻 (%)</label>
+            <input type="number" id="fundThreshold" value="-0.02" step="0.01">
+        </div>
+        <div><button id="enableAudio" class="audio-btn">✅ 監控中</button></div>
+        <div style="margin-left:auto; color:#444; font-size:10px;">系統狀態: <span id="sysStatus">OK</span></div>
     </div>
+
     <table>
-        <thead><tr><th>幣種</th><th>價格 (前高)</th><th>狀態 (原因 / 時間)</th><th>資費 (5m趨勢)</th><th>持倉 OI (1m變動 / TP目標)</th><th>引力</th></tr></thead>
+        <thead>
+            <tr>
+                <th>幣種</th>
+                <th>價格 (前高)</th>
+                <th>狀態 (原因/持續時間)</th>
+                <th>資費 (🔥趨勢)</th>
+                <th>持倉 OI (1m變動)</th>
+                <th>引力</th>
+            </tr>
+        </thead>
         <tbody id="list"></tbody>
     </table>
 </div>
 
 <script>
     const blacklist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "BNXUSDT"];
-    let audioEnabled = false;
     let historyData = {}; 
     let statusTimestamps = {}; 
     let entryPrices = {}; 
-    let lastKnownTP = {}; 
-
-    const alertAudio = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1100-modern.mp3');
-
-    document.getElementById('enableAudio').addEventListener('click', function() {
-        audioEnabled = !audioEnabled;
-        this.innerText = audioEnabled ? "✅ 監控推播中" : "📢 啟動監控與推播";
-        if (Notification.permission !== "granted") Notification.requestPermission();
-    });
+    let lastKnownTP = {};
+    const delay = ms => new Promise(res => setTimeout(res, ms));
 
     async function update() {
         try {
             const days = parseInt(document.getElementById('lookbackDays').value);
             const fundLimit = parseFloat(document.getElementById('fundThreshold').value);
+            
             const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
             const tickers = await r.json();
+            
+            // 篩選成交量大於 500 萬的幣
             const active = tickers.filter(x => x.symbol.endsWith('USDT') && !blacklist.includes(x.symbol) && parseFloat(x.quoteVolume) > 5000000)
-                                 .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 50);
+                                 .sort((a,b) => b.quoteVolume - a.quoteVolume).slice(0, 30);
 
-            document.getElementById('lastUpdateTime').innerText = new Date().toLocaleTimeString();
+            let res = [];
+            for (let t of active) {
+                try {
+                    // 加入微小延遲防止 400 Bad Request
+                    await delay(50); 
+                    const [fundR, kR, oiR] = await Promise.all([
+                        fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`).then(res => res.json()),
+                        fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`).then(res => res.json()),
+                        fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${t.symbol}`).then(res => res.json())
+                    ]);
 
-            const promises = active.map(async (t) => {
-                const [fundR, kR, oiR] = await Promise.all([
-                    fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${t.symbol}`).then(res => res.json()),
-                    fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${t.symbol}&interval=4h&limit=${(days*6)+1}`).then(res => res.json()),
-                    fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${t.symbol}`).then(res => res.json())
-                ]);
+                    const curPrice = parseFloat(t.lastPrice);
+                    const fund = parseFloat(fundR.lastFundingRate) * 100;
+                    const oi = parseFloat(oiR.openInterest);
+                    const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
+                    const dist = ((highVal - curPrice) / curPrice * 100);
 
-                const curPrice = parseFloat(t.lastPrice);
-                const fund = parseFloat(fundR.lastFundingRate) * 100;
-                const oi = parseFloat(oiR.openInterest);
-                const highVal = Math.max(...kR.slice(0, days*6).map(k => parseFloat(k[2])));
-                const dist = ((highVal - curPrice) / curPrice * 100);
+                    if (!historyData[t.symbol]) historyData[t.symbol] = [];
+                    historyData[t.symbol].push({ fund, oi });
+                    if (historyData[t.symbol].length > 20) historyData[t.symbol].shift();
 
-                if (!historyData[t.symbol]) historyData[t.symbol] = [];
-                historyData[t.symbol].push({ fund, oi });
-                if (historyData[t.symbol].length > 20) historyData[t.symbol].shift(); // 滾動5分鐘數據
-
-                const old = historyData[t.symbol][0];
-                const oiChange = ((oi - old.oi) / old.oi * 100);
-                const fundDelta = fund - old.fund; 
-                const fundOk = fund <= fundLimit;
-
-                let stCmd = "SCAN", reason = "掃描中";
-                if (curPrice > highVal && fundOk) {
-                    if (oiChange > 1.0) { stCmd = "ENTRY"; reason = "結構突破"; }
-                    else { stCmd = "HOLD"; reason = "能量續航"; }
-                } else if (dist < 1.5 && fundOk) {
-                    if (oiChange > 5.0) { stCmd = "ENTRY"; reason = "主力伏擊"; }
-                    else { stCmd = "READY"; reason = "進入射程"; }
-                }
-
-                // 處理 ENTRY 邏輯
-                let tpDisplay = "";
-                if (stCmd === "ENTRY") {
-                    if (!entryPrices[t.symbol]) entryPrices[t.symbol] = curPrice;
-                    if (!statusTimestamps[t.symbol]) statusTimestamps[t.symbol] = Date.now();
-
-                    // 計算 TP
-                    let fShift = Math.abs(Math.min(0, fundDelta));
-                    let boost = (Math.min(fShift, 0.1) / 0.01) * 0.5 + (fShift > 0.1 ? ((fShift - 0.1) / 0.01) * 1.0 : 0);
-                    boost += (Math.max(0, oiChange) / 5) * 1;
-                    let tpPrice = entryPrices[t.symbol] * (1 + (boost / 100));
-                    tpDisplay = `<span class="tp-label">(TP: ${tpPrice.toFixed(4)})</span>`;
-
-                    // 推播
-                    if (audioEnabled && (!lastKnownTP[t.symbol] || tpPrice > lastKnownTP[t.symbol] * 1.005)) {
-                        new Notification(`🎯 ${t.symbol} 目標上調`, { body: `TP: ${tpPrice.toFixed(4)} | 5m資費偏移: ${fundDelta.toFixed(3)}%` });
-                        lastKnownTP[t.symbol] = tpPrice;
-                        alertAudio.play();
+                    const old = historyData[t.symbol][0];
+                    const oiChange = ((oi - old.oi) / old.oi * 100);
+                    const fundDelta = fund - old.fund;
+                    
+                    let stCmd = "SCAN", reason = "系統掃描中";
+                    if (curPrice > highVal && fund <= fundLimit) {
+                        stCmd = (oiChange > 1.0) ? "ENTRY" : "HOLD";
+                        reason = (stCmd === "ENTRY") ? "結構突破" : "能量續航";
+                    } else if (dist < 1.5 && fund <= fundLimit) {
+                        stCmd = (oiChange > 5.0) ? "ENTRY" : "READY";
+                        reason = (stCmd === "ENTRY") ? "主力伏擊" : "進入射程";
                     }
-                } else if (stCmd === "SCAN") {
-                    delete entryPrices[t.symbol]; delete statusTimestamps[t.symbol]; delete lastKnownTP[t.symbol];
-                }
 
-                let duration = statusTimestamps[t.symbol] ? `${Math.floor((Date.now()-statusTimestamps[t.symbol])/60000)}m` : "";
+                    // TP 計算
+                    let tpDisplay = "";
+                    if (stCmd === "ENTRY") {
+                        if (!entryPrices[t.symbol]) entryPrices[t.symbol] = curPrice;
+                        let fShift = Math.abs(Math.min(0, fundDelta));
+                        let boost = (Math.min(fShift, 0.1) / 0.01) * 0.5 + (fShift > 0.1 ? ((fShift - 0.1) / 0.01) * 1.0 : 0);
+                        boost += (Math.max(0, oiChange) / 5) * 1;
+                        let tpPrice = entryPrices[t.symbol] * (1 + (boost / 100));
+                        tpDisplay = `<span class="tp-label">TP: ${tpPrice.toFixed(4)}</span>`;
+                        
+                        // 推播邏輯 (僅當 TP 顯著增加)
+                        if (tpPrice > (lastKnownTP[t.symbol] || 0) * 1.005) {
+                            if (Notification.permission === "granted") {
+                                new Notification(`🎯 ${t.symbol} 目標價更新`, { body: `最新目標: ${tpPrice.toFixed(4)}` });
+                                lastKnownTP[t.symbol] = tpPrice;
+                            }
+                        }
+                    } else if (stCmd === "SCAN") {
+                        delete entryPrices[t.symbol]; delete lastKnownTP[t.symbol];
+                    }
 
-                return { symbol: t.symbol, highVal, curPrice, dist, fund, oiChange, stCmd, reason, duration, tpDisplay, fundExpanding: fund < old.fund };
-            });
+                    if (stCmd !== "SCAN" && !statusTimestamps[t.symbol]) statusTimestamps[t.symbol] = Date.now();
+                    let duration = statusTimestamps[t.symbol] ? `${Math.floor((Date.now()-statusTimestamps[t.symbol])/60000)}m` : "";
 
-            const res = (await Promise.all(promises)).filter(x => x !== null);
+                    res.push({ symbol: t.symbol, highVal, curPrice, dist, fund, oiChange, stCmd, reason, duration, tpDisplay, fundExpanding: fund < old.fund });
+                } catch (err) { console.error(t.symbol, err); }
+            }
+
             const sortOrder = { 'READY': 0, 'ENTRY': 1, 'HOLD': 2, 'SCAN': 3 };
             res.sort((a,b) => (sortOrder[a.stCmd] - sortOrder[b.stCmd]) || (a.dist - b.dist));
 
-            document.getElementById('list').innerHTML = res.slice(0, 25).map(c => `
+            document.getElementById('list').innerHTML = res.map(c => `
                 <tr>
                     <td><b>${c.symbol.replace('USDT','')}</b></td>
                     <td><div style="font-size:10px;color:#666">${c.highVal}</div>${c.curPrice}</td>
                     <td><span class="status-badge ${c.stCmd}">${c.stCmd}</span> <span style="font-size:10px;color:#888">${c.reason}</span> <span class="timer">${c.duration}</span></td>
                     <td class="${Math.abs(c.fund)>=0.05?'fund-warn':''}">${c.fund.toFixed(4)}% ${c.fundExpanding?'🔥':''}</td>
-                    <td><span class="${c.oiChange>0?'oi-up':'oi-down'}">${c.oiChange.toFixed(2)}%</span> ${c.tpDisplay}</td>
+                    <td><span style="color:${c.oiChange>0?'#2ebd85':'#f6465d'}">${c.oiChange.toFixed(2)}%</span> ${c.tpDisplay}</td>
                     <td style="color:${c.dist<1.5?'#f0b90b':''}">${c.dist.toFixed(2)}%</td>
                 </tr>
             `).join('');
-        } catch (e) {}
+            document.getElementById('sysStatus').innerText = "OK";
+        } catch (e) { document.getElementById('sysStatus').innerText = "API Error"; }
     }
+
+    if (Notification.permission !== "granted") Notification.requestPermission();
     setInterval(update, 15000); update();
 </script>
 </body>
