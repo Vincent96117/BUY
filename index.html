@@ -17,7 +17,8 @@
         .btn-pin { padding: 5px 10px; background: #444; color: white; }
         .btn-pin.active { background: #ffeb3b; color: black; }
         #status { margin-left: auto; color: #00ffff; font-weight: bold; }
-        .tp-box { color: #00ff00; font-size: 11px; display: block; margin-top: 4px; font-weight: bold; border-top: 1px dashed #444; padding-top: 2px; }
+        /* TP 顯示位置：OI 變動下方的小字 */
+        .tp-text { display: block; color: #00ff00; font-size: 11px; margin-top: 3px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -39,7 +40,7 @@
                 <th>距離 %</th>
                 <th>資費</th>
                 <th>狀態</th>
-                <th>OI 變動 (5m TP)</th>
+                <th>OI 變動 / TP</th>
             </tr>
         </thead>
         <tbody id="radarBody"></tbody>
@@ -53,23 +54,21 @@
     };
 
     let isRunning = false, notifiedStatus = {}, signalTimes = {}, lastOI = {}, allData = {}, pinnedSymbols = new Set();
-    let entryDataStore = {}; // 專門存 ENTRY 瞬間的基準數據
-    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    let entryPoints = {}; // 紀錄進場價與資費基準
 
     async function sendPush(title, message) {
         if (!title || !message) return;
+        const params = new URLSearchParams({
+            token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, title: title, message: message, priority: "1", sound: "classical"
+        });
         try {
-            const params = new URLSearchParams({
-                token: CONFIG.PO_TOKEN, user: CONFIG.PO_USER, title: title, message: message, priority: "1", sound: "classical"
-            });
-            await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: params });
+            await fetch('https://api.pushover.net/1/messages.json', { method: 'POST', body: params.toString() });
         } catch (e) { console.error("Push Error", e); }
-        
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(new SpeechSynthesisUtterance(title));
     }
 
-    function testPush() { sendPush("群組測試", "連線正常！"); alert("測試發送中..."); }
+    function testPush() { sendPush("群組測試成功", "嘎空糾察隊連線正常！"); alert("測試發送中..."); }
     function togglePin(symbol) { pinnedSymbols.has(symbol) ? pinnedSymbols.delete(symbol) : pinnedSymbols.add(symbol); render(); }
 
     async function getSingleOI(symbol) {
@@ -104,7 +103,8 @@
             const symbolsToProcess = new Set([...eligible, ...pinnedSymbols]);
 
             for (let symbol of symbolsToProcess) {
-                await sleep(100); // 防 400 報錯
+                // 微小緩衝防止 400
+                await new Promise(r => setTimeout(r, 20));
 
                 if (!allData[symbol]) {
                     const high = await get3DHigh(symbol);
@@ -126,6 +126,7 @@
                 let st = "SCAN";
                 let old = notifiedStatus[symbol] || "SCAN";
 
+                // --- 🚨 原始邏輯：一個字沒動 ---
                 const isEntry = price >= high || (dist <= 1.5 && oiChange > 0.8);
                 const keepHold = (old === "ENTRY" || old === "HOLD") && (price >= high * 0.99 && oiChange > -1.5);
 
@@ -133,40 +134,28 @@
                 else if (eligible.includes(symbol) && isEntry) st = "ENTRY";
                 else if (eligible.includes(symbol) && dist <= 1.5) st = "READY";
 
-                // --- 僅 ENTRY 抓取並計算動態 TP ---
-                let tpDisplay = "";
+                // --- 🎯 僅 ENTRY 計算 TP ---
+                let tpTag = "";
                 if (st === "ENTRY") {
-                    // 如果剛進入 ENTRY，記錄基準點 (進場價與基準資費)
-                    if (!entryDataStore[symbol]) {
-                        entryDataStore[symbol] = { p: price, f: parseFloat(fund) };
-                    }
-                    
-                    // 能量加成公式 (5分鐘滾動權重)
-                    let fundShift = Math.abs(parseFloat(fund) - entryDataStore[symbol].f);
-                    let boost = (fundShift / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1.0);
-                    
-                    let tpPrice = entryDataStore[symbol].p * (1 + (boost / 100));
-                    tpDisplay = `<span class="tp-box">🎯 目標: ${tpPrice.toFixed(4)}</span>`;
+                    if (!entryPoints[symbol]) entryPoints[symbol] = { p: price, f: parseFloat(fund) };
+                    // TP 算法：(資費偏移/0.01 * 0.5) + (OI變動/5 * 1.0)
+                    let fShift = Math.abs(parseFloat(fund) - entryPoints[symbol].f);
+                    let boost = (fShift / 0.01 * 0.5) + (Math.max(0, oiChange) / 5 * 1.0);
+                    let tpPrice = entryPoints[symbol].p * (1 + (boost / 100));
+                    tpTag = `<span class="tp-text">🎯TP: ${tpPrice.toFixed(4)}</span>`;
                 } else if (st !== "HOLD") {
-                    // 離開 ENTRY 或 HOLD 狀態時清除基準數據
-                    delete entryDataStore[symbol];
+                    delete entryPoints[symbol];
                 }
 
                 if (st !== "SCAN" && !signalTimes[symbol]) signalTimes[symbol] = new Date().toLocaleTimeString();
                 if (st !== old && st !== "SCAN") sendPush(`${st}: ${symbol}`, `價:${price} OI:${oiChange}%`);
                 
                 notifiedStatus[symbol] = st;
-                allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange, tpDisplay };
+                allData[symbol].row = { time: signalTimes[symbol] || "--", symbol, price, high, dist, fund, st, oiChange, tpTag };
             }
 
-            Object.keys(allData).forEach(s => {
-                if (!eligible.includes(s) && !pinnedSymbols.has(s) && notifiedStatus[s] === "SCAN") {
-                    delete allData[s]; delete signalTimes[s]; delete notifiedStatus[s];
-                }
-            });
-
             render();
-            document.getElementById('status').innerText = "✅ 群組監控中 (10s)";
+            document.getElementById('status').innerText = "✅ 監控中 (12s)";
         } catch (e) { console.error(e); }
     }
 
@@ -182,7 +171,7 @@
                 <td style="color:${c.dist < 0 ? '#00ff00' : '#ff4444'}">${c.dist}%</td>
                 <td>${c.fund}%</td>
                 <td class="${c.st}">${c.st}</td>
-                <td>${c.oiChange}% ${c.tpDisplay}</td>
+                <td>${c.oiChange}% ${c.tpTag}</td>
             </tr>
         `).join('');
     }
@@ -190,7 +179,7 @@
     function toggleSystem() {
         isRunning = !isRunning;
         document.getElementById('startBtn').innerText = isRunning ? "🛑 停止" : "🚀 啟動";
-        if (isRunning) { mainLoop(); setInterval(mainLoop, 10000); }
+        if (isRunning) { mainLoop(); setInterval(mainLoop, 12000); }
     }
 </script>
 </body>
